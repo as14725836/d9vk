@@ -1,0 +1,105 @@
+name: build-dxvk
+
+# 通用 DXVK 构建器：可编任意仓库/分支，并可叠加补丁（如 async / gplasync / 自定义修复）
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: '源码仓库 owner/name'
+        required: true
+        default: 'doitsujin/dxvk'
+      ref:
+        description: '分支 / tag / 提交 SHA'
+        required: true
+        default: 'v3.1.1'
+      patches:
+        description: '要叠加的补丁 URL（空格分隔，.patch/.diff），留空则不改动源码'
+        required: false
+        default: ''
+      version_name:
+        description: '版本名（产物目录/压缩包 = dxvk-<版本名>），留空则由 ref 推导'
+        required: false
+        default: ''
+      release_tag:
+        description: '填了则在构建成功后创建/更新该 tag 的 Release'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ inputs.source_repo }} @ ${{ inputs.ref }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build mingw-w64 glslang-tools \
+            g++-mingw-w64-x86-64-posix g++-mingw-w64-i686-posix \
+            patch curl
+          for t in x86_64-w64-mingw32-gcc x86_64-w64-mingw32-g++ i686-w64-mingw32-gcc i686-w64-mingw32-g++; do
+            sudo update-alternatives --set "$t" "/usr/bin/$t-posix" || true
+          done
+          meson --version; ninja --version
+          x86_64-w64-mingw32-g++ -v 2>&1 | grep -i 'Thread model'
+          printf '#include <mutex>\n#include <thread>\nint main(){ std::mutex m; return 0; }\n' > /tmp/p.cpp
+          x86_64-w64-mingw32-g++ -c /tmp/p.cpp -o /tmp/p.o && echo 'posix 工具链 OK'
+
+      - name: 拉取源码（含子模块）
+        run: |
+          git clone --recurse-submodules -j 4 "https://github.com/${{ inputs.source_repo }}" src
+          cd src
+          git fetch --tags --depth 1 origin "${{ inputs.ref }}" 2>/dev/null || true
+          git checkout "${{ inputs.ref }}"
+          git submodule update --init --recursive -j 4
+          echo "HEAD: $(git rev-parse HEAD)"
+
+      - name: 叠加补丁
+        run: |
+          cd src
+          for u in ${{ inputs.patches }}; do
+            echo "=== 应用补丁: $u ==="
+            curl -fsSL "$u" -o /tmp/p.patch
+            patch -p1 --forward --batch < /tmp/p.patch
+            echo "--- 应用成功: $u"
+          done
+          [ -z "${{ inputs.patches }}" ] && echo '未提供补丁，使用原始源码'
+
+      - name: 计算版本名
+        id: v
+        run: |
+          V="${{ inputs.version_name }}"
+          [ -n "$V" ] || V="${{ inputs.ref }}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "版本名 = $V"
+          ls -l ./src | head -5
+
+      - name: 构建 (dxvk x64 + x32)
+        run: |
+          cd src
+          chmod +x package-release.sh
+          ./package-release.sh "${{ steps.v.outputs.version }}" "$PWD/build"
+          ls -lh build/
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxvk-${{ steps.v.outputs.version }}
+          path: src/build/dxvk-*.tar.gz
+          if-no-files-found: error
+
+      - name: 创建/更新 Release
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          R="-R ${GITHUB_REPOSITORY}"
+          gh release view "$TAG" $R >/dev/null 2>&1 || gh release create "$TAG" $R --title "$TAG" --generate-notes --target "$GITHUB_SHA"
+          gh release upload "$TAG" $R src/build/dxvk-*.tar.gz --clobber
+          echo "已发布: https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"
