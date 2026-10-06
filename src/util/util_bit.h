@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 
 #ifndef _MSC_VER
 #if defined(__WINE__) && defined(__clang__)

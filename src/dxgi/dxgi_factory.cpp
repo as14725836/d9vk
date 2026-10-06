@@ -1,4 +1,5 @@
 #include "dxgi_factory.h"
+#include <utility>
 #include "dxgi_swapchain.h"
 
 namespace dxvk {
