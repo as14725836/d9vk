@@ -1,0 +1,133 @@
+name: build
+
+on:
+  push:
+    branches: [master, main]
+    tags: ['*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: '版本名（产物目录/压缩包 = dxvk-<版本名>），留空则按 ref 自动生成'
+        required: false
+        default: ''
+      no_package:
+        description: '不打包 tar.gz（--no-package）'
+        type: boolean
+        default: false
+      dev_build:
+        description: '保留中间构建目录（--dev-build）'
+        type: boolean
+        default: false
+      winelib:
+        description: '额外用 winelib 构建 Linux 版（实验性）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  mingw:
+    name: MinGW (x64 + x32)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build mingw-w64 glslang-tools
+          echo '--- 工具链版本 ---'
+          meson --version
+          ninja --version
+          x86_64-w64-mingw32-g++ --version | head -1
+          i686-w64-mingw32-g++ --version | head -1
+          glslangValidator --version | head -2
+
+      - name: 计算版本名
+        id: v
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version_name }}" ]; then
+            V="${{ inputs.version_name }}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            V="${GITHUB_REF_NAME}"
+          else
+            V="${GITHUB_REF_NAME}-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "版本名 = $V"
+
+      - name: 构建 (dxvk x64 + x32)
+        run: |
+          chmod +x package-release.sh
+          ARGS=""
+          if [ "${{ inputs.dev_build }}" = "true" ]; then ARGS="$ARGS --dev-build"; fi
+          if [ "${{ inputs.no_package }}" = "true" ]; then ARGS="$ARGS --no-package"; fi
+          echo "./package-release.sh ${{ steps.v.outputs.version }} \$PWD/build $ARGS"
+          ./package-release.sh "${{ steps.v.outputs.version }}" "$PWD/build" $ARGS
+
+      - name: 列出产物
+        run: |
+          ls -lh build/
+          for d in build/dxvk-*; do
+            [ -d "$d" ] || continue
+            echo "== $d"; ls -lh "$d"; ls -lh "$d/x64" "$d/x32" 2>/dev/null | head -40
+          done
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: d9vk-${{ steps.v.outputs.version }}
+          path: build/dxvk-*
+          if-no-files-found: error
+
+  winelib:
+    name: Winelib (x64 + x32, 实验性)
+    if: github.event_name == 'workflow_dispatch' && inputs.winelib
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖 (含 wine 工具链)
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build glslang-tools wine64 wine64-tools wine32-tools
+
+      - name: 构建 (winelib)
+        run: |
+          chmod +x package-release.sh
+          V="${{ inputs.version_name }}"
+          [ -n "$V" ] || V="winelib-$(git rev-parse --short HEAD)"
+          ./package-release.sh "$V" "$PWD/build" --winelib
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: d9vk-winelib
+          path: build/dxvk-*
+          if-no-files-found: warn
+
+  release:
+    name: 发布 Release
+    if: github.ref_type == 'tag'
+    needs: mingw
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 下载产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 创建/更新 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -lh dist
+          TAG="${GITHUB_REF_NAME}"
+          R="-R ${GITHUB_REPOSITORY}"
+          gh release view "$TAG" $R >/dev/null 2>&1 || gh release create "$TAG" $R --title "$TAG" --generate-notes --target "$GITHUB_SHA"
+          gh release upload "$TAG" $R dist/*.tar.gz --clobber
