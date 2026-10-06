@@ -37,13 +37,26 @@ jobs:
       - name: 安装依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends meson ninja-build mingw-w64 glslang-tools
+          # 注意：dxvk 1.4.x 代码用到 std::mutex / std::thread，
+          # Ubuntu 自带的 mingw-w64 默认是 win32 线程模型，libstdc++ 没有这些类型，
+          # 必须换成 posix 线程模型的工具链（与上游 CI 一致）。
+          sudo apt-get install -y --no-install-recommends meson ninja-build mingw-w64 glslang-tools \
+            g++-mingw-w64-x86-64-posix g++-mingw-w64-i686-posix
+          for t in x86_64-w64-mingw32-gcc x86_64-w64-mingw32-g++ i686-w64-mingw32-gcc i686-w64-mingw32-g++; do
+            sudo update-alternatives --set "$t" "/usr/bin/$t-posix" || true
+          done
           echo '--- 工具链版本 ---'
           meson --version
           ninja --version
           x86_64-w64-mingw32-g++ --version | head -1
           i686-w64-mingw32-g++ --version | head -1
+          x86_64-w64-mingw32-g++ -v 2>&1 | grep -i 'Thread model' || true
+          i686-w64-mingw32-g++ -v 2>&1 | grep -i 'Thread model' || true
           glslangValidator --version | head -2
+          echo '--- 线程模型自检（必须通过，否则后面一定编译失败）---'
+          printf '#include <mutex>\n#include <thread>\nint main(){ std::mutex m; return 0; }\n' > /tmp/probe.cpp
+          x86_64-w64-mingw32-g++ -c /tmp/probe.cpp -o /tmp/probe64.o && echo 'x64 std::mutex OK'
+          i686-w64-mingw32-g++ -c /tmp/probe.cpp -o /tmp/probe32.o && echo 'x32 std::mutex OK'
 
       - name: 计算版本名
         id: v
