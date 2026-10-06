@@ -52,16 +52,16 @@ jobs:
 
       - name: 拉取源码（含子模块）
         run: |
-          git clone --recurse-submodules -j 4 "https://github.com/${{ inputs.source_repo }}" src
-          cd src
-          git fetch --tags --depth 1 origin "${{ inputs.ref }}" 2>/dev/null || true
-          git checkout "${{ inputs.ref }}"
+          git clone --recurse-submodules -j 4 "https://github.com/${{ inputs.source_repo }}" dxvk-src
+          cd dxvk-src
+          git fetch --tags origin || true
+          git checkout "${{ inputs.ref }}" || git checkout "tags/${{ inputs.ref }}"
           git submodule update --init --recursive -j 4
           echo "HEAD: $(git rev-parse HEAD)"
 
       - name: 叠加补丁
         run: |
-          cd src
+          cd dxvk-src
           for u in ${{ inputs.patches }}; do
             echo "=== 应用补丁: $u ==="
             curl -fsSL "$u" -o /tmp/p.patch
@@ -77,11 +77,11 @@ jobs:
           [ -n "$V" ] || V="${{ inputs.ref }}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "版本名 = $V"
-          ls -l ./src | head -5
+          ls -l ./dxvk-src | head -5
 
       - name: 构建 (dxvk x64 + x32)
         run: |
-          cd src
+          cd dxvk-src
           chmod +x package-release.sh
           ./package-release.sh "${{ steps.v.outputs.version }}" "$PWD/build"
           ls -lh build/
@@ -90,7 +90,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dxvk-${{ steps.v.outputs.version }}
-          path: src/build/dxvk-*.tar.gz
+          path: dxvk-src/build/dxvk-*.tar.gz
           if-no-files-found: error
 
       - name: 创建/更新 Release
@@ -101,5 +101,5 @@ jobs:
           TAG="${{ inputs.release_tag }}"
           R="-R ${GITHUB_REPOSITORY}"
           gh release view "$TAG" $R >/dev/null 2>&1 || gh release create "$TAG" $R --title "$TAG" --generate-notes --target "$GITHUB_SHA"
-          gh release upload "$TAG" $R src/build/dxvk-*.tar.gz --clobber
+          gh release upload "$TAG" $R dxvk-src/build/dxvk-*.tar.gz --clobber
           echo "已发布: https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"
