@@ -103,7 +103,7 @@ jobs:
             echo "D3D12 支持包（vkd3d-proton，**不是 dxvk**）。由 build-vkd3d 流水线自动构建（run #${GITHUB_RUN_NUMBER}）。"
             echo
             echo "## 基本信息"
-            echo "- 源码：\\`HansKristian-Work/vkd3d-proton\\` @ \\`${{ inputs.ref }}\\`"
+            echo "- 源码：\`HansKristian-Work/vkd3d-proton\` @ \`${{ inputs.ref }}\`"
             echo "- 构建环境：ubuntu-24.04 + mingw-w64 13.2.0（posix）+ mingw-w64-tools(widl) + meson + glslang"
             echo
             echo "## 包内容"
