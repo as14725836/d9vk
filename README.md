@@ -33,6 +33,7 @@ export WINEDLLOVERRIDES="d3d8,d3d9,d3d10core,d3d11,dxgi,d3d12,d3d12core=n,b"
 - **配置模板** → [`dxvk.conf.android.example`](dxvk.conf.android.example)
 - **Galgame / 2D 游戏专项** → [`docs/GALGAME.md`](docs/GALGAME.md) + [`dxvk.conf.galgame.example`](dxvk.conf.galgame.example)
 - **性能调优总表** → [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)
+- **线程与内存稳定性** → [`docs/STABILITY.md`](docs/STABILITY.md) + [`wine-stability.env`](wine-stability.env)
 - **一条命令启动（性能环境变量 + 固定虚拟桌面尺寸）** → [`scripts/wine-perf-launch.sh`](scripts/wine-perf-launch.sh)
 
 ## 四、自己构建
