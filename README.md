@@ -1,123 +1,56 @@
-# This work has been upstreamed and is continuing development there
-## This repo is only open for the remaining issues on the tracker
-# https://github.com/doitsujin/dxvk
+# dxvk / vkd3d-proton 预编译包（Android + box64/Wine）
 
-# DXVK
+本仓库提供面向 **Android + box64/Wine（Winlator 类环境）** 的 D3D8–D3D12 翻译层预编译包，
+全部由 GitHub Actions 在本仓库内构建（可复现，不转载闭源成品）。
 
-A Vulkan-based translation layer for Direct3D 10/11 which allows running 3D applications on Linux using Wine.
+## 一、下载（Releases）
 
-For the current status of the project, please refer to the [project wiki](https://github.com/doitsujin/dxvk/wiki).
+| Tag | 说明 | 适用 |
+|---|---|---|
+| `dxvk-3.1.1` | 主线最新（d3d8/9/10/11） | 驱动 Vulkan 1.3 → **首选** |
+| `dxvk-3.0.2` `dxvk-2.7.1` `dxvk-2.6.2` `dxvk-2.5.3` `dxvk-2.4.1` `dxvk-2.3.1` `dxvk-2.0` | 主线阶梯 | 逐版本回落定位 |
+| `dxvk-async-2.0` | 主线 2.0 + async 补丁 | 卡顿明显时 |
+| `dxvk-1.10.3` / `dxvk-1.9.4` | 1.x（含 `d3d10.dll`/`d3d10_1.dll`） | 驱动只有 Vulkan 1.1、D3D10.1 游戏 |
+| `dxvk-sao-1.11.1` | dxvk-sao（Vulkan 1.1 + Async + D3D8） | 老驱动 + 要 async |
+| `vkd3d-proton-3.0.1` | **D3D12**（d3d12.dll / d3d12core.dll） | D3D12 游戏 |
+| `v1.4.6` | d9vk 原版（仅 D3D9） | 历史对照 |
 
+## 二、装完必须做的一件事
 
-## How to use
-In order to install a DXVK package obtained from the [release](https://github.com/doitsujin/dxvk/releases) page into a given wine prefix, run the following commands from within the DXVK directory:
-
-```
-export WINEPREFIX=/path/to/.wine-prefix
-./setup_dxvk.sh install
-```
-
-This will **copy** the DLLs into the `system32` and `syswow64` directories of your wine prefix and set up the required DLL overrides. Pure 32-bit prefixes are also supported.
-
-The setup script optionally takes the following arguments:
-- `--symlink`: Create symbolic links to the DLL files instead of copying them. This is especially useful for development.
-- `--without-dxgi`: Do not install DXVK's DXGI implementation and use the one provided by wine instead. This is necessary for both vkd3d and DXVK to work within the same wine prefix.
-
-Verify that your application uses DXVK instead of wined3d by checking for the presence of the log file `d3d11.log` in the application's directory, or by enabling the HUD (see notes below).
-
-In order to remove DXVK from a prefix, run the following command:
-```
-export WINEPREFIX=/path/to/.wine-prefix
-./setup_dxvk.sh uninstall
+按位数放对位置 + 覆盖 native：
+```bash
+# 64 位 DLL → 前缀的 drive_c/windows/system32
+# 32 位 DLL → 前缀的 drive_c/windows/syswow64
+export WINEDLLOVERRIDES="d3d8,d3d9,d3d10core,d3d11,dxgi,d3d12,d3d12core=n,b"
 ```
 
-## Build instructions
+## 三、遇到问题先看文档
 
-### Requirements:
-- [wine 3.10](https://www.winehq.org/) or newer
-- [Meson](http://mesonbuild.com/) build system (at least version 0.46)
-- [MinGW64](http://mingw-w64.org/) 6.0 compiler and headers
-- [glslang](https://github.com/KhronosGroup/glslang) compiler
+- **黑屏 / 偏色 / 分辨率异常（如 `Buffer size: 185x2`）/ `D3D10CORE.DLL.D3D10CoreCreateDevice@20, aborting`**
+  → [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md)
+- **驱动侧（Turnip/Mesa）能力与建议** → [`docs/MESA-TURNIP-AUDIT.md`](docs/MESA-TURNIP-AUDIT.md)
+- **可用补丁/衍生版清单（哪些能复现、哪些只有成品）** → [`docs/PATCHES.md`](docs/PATCHES.md)
+- **配置模板** → [`dxvk.conf.android.example`](dxvk.conf.android.example)
+- **一条命令启动（固定虚拟桌面尺寸 + override）** → [`scripts/wine-dxvk-launch.sh`](scripts/wine-dxvk-launch.sh)
 
-### Building DLLs
+## 四、自己构建
 
-#### The simple way
-Inside the DXVK directory, run:
-```
-./package-release.sh master /your/target/directory --no-package
-```
+| 流水线 | 用途 |
+|---|---|
+| `build-dxvk.yml` | 任意仓库/分支 + 可选补丁（`patches`）+ 可选优化选项（`extra_flags`，如 `-O3 -flto`）；可自动发布 |
+| `build-vkd3d.yml` | vkd3d-proton（D3D12） |
+| `auto-update.yml` | 每日检查上游 dxvk / dxvk-sao 新版本，自动构建并发布 |
+| `build.yml` | 本仓库自身（d9vk）的构建 |
 
-This will create a folder `dxvk-master` in `/your/target/directory`, which contains both 32-bit and 64-bit versions of DXVK, which can be set up in the same way as the release versions as noted above.
+## 五、已知边界
 
-In order to preserve the build directories for development, pass `--dev-build` to the script. This option implies `--no-package`. After making changes to the source code, you can then do the following to rebuild DXVK:
-```
-# change to build.32 for 32-bit
-cd /your/target/directory/build.64
-ninja install
-```
+- dxvk **不负责** D3D12（那是 vkd3d-proton）；也不提供 OpenGL。
+- dxvk 2.0+ 起不再自带 `d3d10.dll`/`d3d10_1.dll`；3.x 起不再提供 `setup_dxvk.sh`。
+- 主线 3.x 目前没有公开可用的 async/gplasync 补丁：要异步只能停在 `dxvk-2.0` 或 `dxvk-sao-1.11.1`。
+- 本仓库不打包闭源成品（STAR ENGINE / VEGAS / gplasync 预编译包）。
 
-A winelib build can be created by adding the `--winelib` argument.
+## 六、致谢
 
-#### Compiling manually
-```
-# 64-bit build. For 32-bit builds, replace
-# build-win64.txt with build-win32.txt
-meson --cross-file build-win64.txt --buildtype release --prefix /your/dxvk/directory build.w64
-cd build.w64
-ninja install
-```
-
-The D3D10, D3D11 and DXGI DLLs will be located in `/your/dxvk/directory/bin`. Setup has to be done manually in this case.
-
-### Notes on Vulkan drivers
-Before reporting an issue, please check the [Wiki](https://github.com/doitsujin/dxvk/wiki/Driver-support) page on the current driver status and make sure you run a recent enough driver version for your hardware.
-
-### Online multi-player games
-Manipulation of Direct3D libraries in multi-player games may be considered cheating and can get your account **banned**. This may also apply to single-player games with an embedded or dedicated multiplayer portion. **Use at your own risk.**
-
-### HUD
-The `DXVK_HUD` environment variable controls a HUD which can display the framerate and some stat counters. It accepts a comma-separated list of the following options:
-- `devinfo`: Displays the name of the GPU and the driver version.
-- `fps`: Shows the current frame rate.
-- `frametimes`: Shows a frame time graph.
-- `submissions`: Shows the number of command buffers submitted per frame.
-- `drawcalls`: Shows the number of draw calls and render passes per frame.
-- `pipelines`: Shows the total number of graphics and compute pipelines.
-- `memory`: Shows the amount of device memory allocated and used.
-- `gpuload`: Shows estimated GPU load. May be inaccurate.
-- `version`: Shows DXVK version.
-- `api`: Shows the D3D feature level used by the application. Does not work correctly for D3D10 at the moment.
-- `compiler`: Shows shader compiler activity
-
-Additionally, `DXVK_HUD=1` has the same effect as `DXVK_HUD=devinfo,fps`, and `DXVK_HUD=full` enables all available HUD elements.
-
-### Device filter
-Some applications do not provide a method to select a different GPU. In that case, DXVK can be forced to use a given device:
-- `DXVK_FILTER_DEVICE_NAME="Device Name"` Selects devices with a matching Vulkan device name, which can be retrieved with tools such as `vulkaninfo`. Matches on substrings, so "VEGA" or "AMD RADV VEGA10" is supported if the full device name is "AMD RADV VEGA10 (LLVM 9.0.0)", for example. If the substring matches more than one device, the first device matched will be used.
-
-**Note:** If the device filter is configured incorrectly, it may filter out all devices and applications will be unable to create a D3D device.
-
-### State cache
-DXVK caches pipeline state by default, so that shaders can be recompiled ahead of time on subsequent runs of an application, even if the driver's own shader cache got invalidated in the meantime. This cache is enabled by default, and generally reduces stuttering.
-
-The following environment variables can be used to control the cache:
-- `DXVK_STATE_CACHE=0` Disables the state cache.
-- `DXVK_STATE_CACHE_PATH=/some/directory` Specifies a directory where to put the cache files. Defaults to the current working directory of the application.
-
-### Debugging
-The following environment variables can be used for **debugging** purposes.
-- `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` Enables Vulkan debug layers. Highly recommended for troubleshooting rendering issues and driver crashes. Requires the Vulkan SDK to be installed on the host system.
-- `DXVK_LOG_LEVEL=none|error|warn|info|debug` Controls message logging.
-- `DXVK_LOG_PATH=/some/directory` Changes path where log files are stored.
-- `DXVK_CONFIG_FILE=/xxx/dxvk.conf` Sets path to the configuration file.
-
-## Troubleshooting
-DXVK requires threading support from your mingw-w64 build environment. If you
-are missing this, you may see "error: 'mutex' is not a member of 'std'". On
-Debian and Ubuntu, this can usually be resolved by using the posix alternate, which
-supports threading. For example, choose the posix alternate from these
-commands (use i686 for 32-bit):
-```
-update-alternatives --config x86_64-w64-mingw32-gcc
-update-alternatives --config x86_64-w64-mingw32-g++
-```
+[doitsujin/dxvk](https://github.com/doitsujin/dxvk)、[HansKristian-Work/vkd3d-proton](https://github.com/HansKristian-Work/vkd3d-proton)、
+[Sporif/dxvk-async](https://github.com/Sporif/dxvk-async)、[Digger1955/dxvk-sao](https://github.com/Digger1955/dxvk-sao)、
+misyltoad/d9vk，以及所有上游贡献者。各项目遵循其原始许可（dxvk: zlib）。

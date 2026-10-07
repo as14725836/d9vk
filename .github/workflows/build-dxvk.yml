@@ -16,6 +16,10 @@ on:
         description: '要叠加的补丁 URL（空格分隔，.patch/.diff），留空则不改动源码'
         required: false
         default: ''
+      extra_flags:
+        description: '追加的编译/链接选项（例如 -O3 -flto 做优化变体），留空则与上游默认一致'
+        required: false
+        default: ''
       fix_mingw_headers:
         description: '自动补齐旧代码缺失的头文件（适配新版 GCC/mingw，老版本必开）'
         type: boolean
@@ -105,6 +109,12 @@ jobs:
           cd dxvk-src
           chmod +x package-release.sh
           # 只构建不打包：打包交给下面统一做，避开各 fork 的目录/压缩包命名差异
+          if [ -n "${{ inputs.extra_flags }}" ]; then
+            export CFLAGS="${{ inputs.extra_flags }}"
+            export CXXFLAGS="${{ inputs.extra_flags }}"
+            export LDFLAGS="${{ inputs.extra_flags }}"
+            echo "额外编译选项: ${{ inputs.extra_flags }}"
+          fi
           ./package-release.sh "${{ steps.v.outputs.version }}" "$PWD/build" --no-package
           echo '=== 统一打包 ==='
           cd build

@@ -1,0 +1,152 @@
+name: auto-update
+
+# 自动跟踪上游并构建：每日检查 doitsujin/dxvk 与 Digger1955/dxvk-sao 的最新 release，
+# 若本仓库还没有对应包，则自动构建并发布。
+on:
+  schedule:
+    - cron: '30 20 * * *'   # 每天 UTC 20:30（北京时间 04:30）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  detect:
+    name: 探测上游新版本
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+      count: ${{ steps.gen.outputs.count }}
+    steps:
+      - name: 查询上游最新 release 并与本仓库对比
+        id: gen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - > /tmp/matrix.json <<'PY'
+          import json, os, urllib.request, urllib.error
+          TOK = os.environ['GH_TOKEN']
+          REPO = os.environ['GITHUB_REPOSITORY']
+          H = {'Authorization': 'Bearer ' + TOK,
+               'Accept': 'application/vnd.github+json',
+               'User-Agent': 'auto-update'}
+
+          def get(path):
+              req = urllib.request.Request('https://api.github.com' + path, headers=H)
+              return json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+
+          def release_exists(path):
+              try:
+                  get(path)
+                  return True
+              except urllib.error.HTTPError as e:
+                  return e.code != 404
+
+          sources = [
+              ('doitsujin/dxvk', 'dxvk'),
+              ('Digger1955/dxvk-sao', 'dxvk-sao'),
+          ]
+          out = []
+          for src, prefix in sources:
+              try:
+                  tag = get('/repos/%s/releases/latest' % src)['tag_name']
+              except Exception:
+                  continue
+              ver = tag[1:] if tag.startswith('v') else tag
+              our = prefix + '-' + ver
+              if release_exists('/repos/%s/releases/tags/%s' % (REPO, our)):
+                  print('skip（已存在）: ' + our, flush=True)
+                  continue
+              print('需要构建: %s @ %s' % (our, tag), flush=True)
+              out.append({'source_repo': src, 'ref': tag,
+                          'version_name': ver, 'release_tag': our})
+          if not out:
+              out = [{'source_repo': '', 'ref': '', 'version_name': '', 'release_tag': ''}]
+          print(json.dumps(out))
+          PY
+          echo "matrix=$(cat /tmp/matrix.json)" >> "$GITHUB_OUTPUT"
+          echo "count=$(python3 -c "import json;print(len([x for x in json.load(open('/tmp/matrix.json')) if x['source_repo']]))")" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.target.release_tag }}
+    needs: detect
+    if: needs.detect.outputs.count != '0'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.detect.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build mingw-w64 glslang-tools \
+            g++-mingw-w64-x86-64-posix g++-mingw-w64-i686-posix patch curl
+          for t in x86_64-w64-mingw32-gcc x86_64-w64-mingw32-g++ i686-w64-mingw32-gcc i686-w64-mingw32-g++; do
+            sudo update-alternatives --set "$t" "/usr/bin/$t-posix" || true
+          done
+
+      - name: 拉取源码
+        run: |
+          git clone --recurse-submodules -j 4 "https://github.com/${{ matrix.target.source_repo }}" dxvk-src
+          cd dxvk-src
+          git fetch --tags origin || true
+          git checkout "${{ matrix.target.ref }}" || git checkout "tags/${{ matrix.target.ref }}"
+          git submodule update --init --recursive -j 4
+
+      - name: 适配新工具链
+        run: |
+          cp scripts/fix-mingw-headers.py dxvk-src/ 2>/dev/null || true
+          cd dxvk-src
+          [ -f fix-mingw-headers.py ] && python3 fix-mingw-headers.py || true
+          git diff --shortstat || true
+
+      - name: 构建并打包
+        run: |
+          cd dxvk-src
+          chmod +x package-release.sh
+          ./package-release.sh "${{ matrix.target.version_name }}" "$PWD/build" --no-package
+          cd build
+          for d in dxvk-*; do
+            [ -d "$d" ] || continue
+            tar -czf "$d.tar.gz" "$d"
+            echo "packed: $d.tar.gz"
+          done
+          ls -lh
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target.release_tag }}
+          path: dxvk-src/build/dxvk-*.tar.gz
+          if-no-files-found: error
+
+      - name: 创建/更新 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ matrix.target.release_tag }}"
+          R="-R ${GITHUB_REPOSITORY}"
+          DLLS=$(tar tzf dxvk-src/build/dxvk-*.tar.gz | grep -E '\.dll$' | sed 's|.*/||' | sort -u | tr '\n' ' ')
+          OVR=$(echo "$DLLS" | sed 's/\.dll//g; s/ /,/g; s/,$//')
+          {
+            echo "# $TAG"
+            echo
+            echo "由 auto-update 流水线自动构建（上游新版本发布后一天内跟进）。"
+            echo
+            echo "- 源码：\`${{ matrix.target.source_repo }}\` @ \`${{ matrix.target.ref }}\`"
+            echo "- 构建环境：ubuntu-24.04 + mingw-w64 13.2.0（posix）+ meson + ninja + glslang"
+            echo "- 新工具链适配：已开启"
+            echo
+            echo "## 安装"
+            echo "- 本包提供：$DLLS"
+            echo "- 64 位 DLL → \`drive_c/windows/system32\`；32 位游戏 → \`drive_c/windows/syswow64\`"
+            echo "- 建议覆盖：\`export WINEDLLOVERRIDES="$OVR=n,b"\`"
+            echo "- 黑屏/偏色/\`D3D10CoreCreateDevice@20, aborting\`/分辨率异常：见 \`docs/COMPATIBILITY.md\`"
+          } > /tmp/notes.md
+          cat /tmp/notes.md
+          gh release create "$TAG" $R --title "$TAG" --target "$GITHUB_SHA" --notes-file /tmp/notes.md \
+            || gh release edit "$TAG" $R --notes-file /tmp/notes.md
+          gh release upload "$TAG" $R dxvk-src/build/dxvk-*.tar.gz --clobber
