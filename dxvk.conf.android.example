@@ -1,28 +1,57 @@
-# Android / box64 + Wine 环境常用 DXVK 配置参考
-# 用法：改名为 dxvk.conf 放到游戏 exe 同目录，或设 DXVK_CONFIG_FILE 指向它。
-# 注意：本文件只包含主线 dxvk 认识的选项；某些第三方分支的 dxvk.* 私有选项不在此列。
+# dxvk.conf — Android + box64/Wine（Adreno / Turnip）性能向模板
+#
+# 所有键名与默认值均取自 dxvk v3.1.1 官方 dxvk.conf（已逐个核对，非杜撰）
+# 用法：放到游戏 exe 同目录，或 WINEPREFIX 根目录；也可用 DXVK_CONFIG_FILE 指定
+# 注意：带“实验”字样的项有正确性/画质代价，请逐项开启并对比效果
 
-# ---- 帧率与延迟 ----
-d3d9.maxFrameRate = 0
+# ============ 帧率 / 延迟 ============
+dxvk.maxFrameRate = 60
+#   0=不限。手机上锁 60 能明显降低发热，从而维持长时间帧率稳定
+
+dxvk.latencySleep = False
+#   默认 Auto。关闭可少一份 CPU 开销（代价：输入延迟略增）
+
+dxvk.tearFree = Auto
+
+dxgi.syncInterval = 1
 d3d9.presentInterval = 1
-dxgi.maxFrameRate = 0
-dxvk.maxFrameLatency = 1
 
-# ---- 库/统计（未体验时用，体验包完成后建议注释）----
-# dxvk.numCompilerThreads = 2
-# dxvk.hud = fps,devinfo,memory
-# d3d9.cachedDynamicBuffers = True
+# ============ 着色器编译（卡顿的主要来源）============
+dxvk.numCompilerThreads = 4
+#   默认 0=按 CPU 核心数自动。8 核 big.LITTLE 建议 4~6：避免小核拖慢整体
 
-# ---- 兼容性（果有贴图/黑屏问题再逐个打开）----
-# d3d9.forceSamplerTypeSpecConstants = True
-# d3d9.textureMemory = 100
-# dxgi.deferSurfaceCreation = True
-# dxgi.syncFrameLatency = True
+dxvk.enableGraphicsPipelineLibrary = True
+#   默认 Auto。需要 VK_EXT_graphics_pipeline_library（Turnip 已支持），可减少首次进入场景的卡顿
 
-# ---- 分辨率/交换链尺寸异常（日志出现 Buffer size: 185x2 之类）----
-# 首选：用固定尺寸的 Wine 虚拟桌面启动： wine explorer /desktop=dxvk,1280x720 game.exe
-# d3d9.forceAspectRatio = "16:9"
-# d3d9.enumerateByDisplays = False
-# d3d9.forceRefreshRate = 60
+# 状态缓存：跨次运行复用已编译着色器，单项收益最大
+#   请在环境变量里设 DXVK_STATE_CACHE_PATH（见 scripts/wine-perf-launch.sh）
+
+# ============ 内存 ============
+dxvk.maxMemoryBudget = 0
+#   默认 0=自动。Android 上可设上限（单位 MB，如 2048）避免驱动超额占用
+# dxgi.maxDeviceMemory = 2048
+
+dxvk.enableMemoryDefrag = True
+#   长时间运行减少内存碎片（默认 False）
+
+# ============ 渲染路径优化（逐个试）============
+dxvk.tilerMode = True
+#   官方说明：tiler 优化，会改变提交启发式。Adreno 是 tiler 架构，建议实测对比
+
+d3d11.relaxedBarriers = True
+#   默认 False。减少同步开销；若出现贴图错乱/闪屏就改回 False
+
+# d3d11.relaxedGraphicsBarriers = True
+# d3d11.cachedDynamicResources = "a"
+# d3d9.cachedWriteOnlyBuffers = True
+# d3d9.extraFrontbuffer = True
+# d3d9.useFP16 = True
+#   移动 GPU 的 FP16 更快，但可能改变计算精度（实验项）
+
+# ============ 显示相关（防怪分辨率）============
+d3d9.enumerateByDisplays = False
 # dxgi.forceRefreshRate = 60
-# d3d9.modeCountCompatibility = True
+# d3d9.forceRefreshRate = 60
+
+# ============ 观测 ============
+# dxvk.hud = fps,frametimes,gpuload,devinfo,memory

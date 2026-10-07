@@ -1,0 +1,63 @@
+# dxvk.conf.galgame — 视觉小说（galgame）/ 2D 游戏专用模板
+#
+# 与 dxvk.conf.android.example 的区别：这份以“画面正确、不闪不偏”优先，
+# 其次才是帧率。所有键名/默认值取自 dxvk v3.1.1 官方 dxvk.conf。
+#
+# 用法（与启动脚本配合）：
+#   export DXVK_CONFIG_FILE=$PWD/dxvk.conf.galgame.example
+#   ./scripts/wine-perf-launch.sh game.exe 1024x768 "$WINEPREFIX"
+
+# ============ 一、先保正确性（这几项都是“别乱开”）============
+d3d9.forceSamplerTypeSpecConstants = False   # True 只为修老游戏；开了可能伤其他游戏
+d3d9.disableA8RT = False                     # 官方注明是为 The Sims 2 准备的，别开
+d3d9.extraFrontbuffer = False                # 只在 GetFrontBufferData 异常时开（会每帧多拷贝一次）
+d3d9.useFP16 = False                         # 2D 渐变/alpha 混合要精度，保持默认
+d3d9.ignoreDefaultBufferLockRange = False
+d3d9.cachedWriteOnlyBuffers = False          # 官方：对 buggy 应用有用，但可能降低 GPU 受限性能
+                                             # 若你的 galgame 是 CPU 瓶颈（低帧但 GPU 很闲）可试 True
+
+# ============ 二、2D 负载真正受益的开关 ============
+d3d9.deviceLocalConstantBuffers = True
+#   默认 Auto = “只在独显上开”。在 Adreno（移动 GPU）上默认是关的，
+#   而 galgame 常每帧多次绘制、频繁更新常量 → 手动开 True 往往有收益
+
+dxvk.numCompilerThreads = 4
+#   默认 0=自动。限制到 4 可避免 8 核 big.LITTLE 上大小核互相拖累
+
+dxvk.enableGraphicsPipelineLibrary = True
+#   默认 Auto。首次进入新场景/新立绘时的着色器编译卡顿能减轻（Turnip 支持）
+
+dxvk.tilerMode = True
+#   默认 Auto。Adreno 是 tiler 架构，官方说明本项会改变提交启发式，建议实测
+
+d3d11.relaxedBarriers = True
+#   2D 游戏对 barrier 不敏感，收益大于风险；若出现贴图错乱就改回 False
+
+# ============ 三、帧率 / 温度（galgame 的关键）============
+dxvk.maxFrameRate = 30
+#   默认 0=不限。大部分 galgame 本身就是 30fps，锁 30 能明显降低发热与耗电，
+#   长时间看剧情不会因降频而卡；文字滚动希望更滑顺就改 60
+
+d3d9.presentInterval = 1
+dxgi.syncInterval = 1
+#   开垂直同步，消除文字滚动时的撕裂
+
+dxvk.latencySleep = False
+#   默认 Auto；关掉少一份 CPU 开销（对 galgame 这种低负载反而有意义）
+
+dxvk.maxMemoryBudget = 0
+#   默认 0=自动。安卓内存紧张时可设上限（单位 MB），例如 1536
+
+# ============ 四、显示 / 分辨率 ============
+d3d9.enumerateByDisplays = False
+#   默认 True。关掉可避免拿到奇怪的显示模式（如 Buffer size: 185x2）
+# d3d9.forceRefreshRate = 60
+# d3d9.forceAspectRatio = ""      # 老 galgame 多为 4:3，值格式参见官方 dxvk.conf
+
+# ============ 五、黑屏排查（需要时再开）============
+# dxgi.deferSurfaceCreation = True
+# d3d9.deferSurfaceCreation = True
+#   官方说明：切换渲染 API / 换分辨率时窗口可能一直全黑，该项是官方解方
+
+# ============ 六、观测 ============
+# dxvk.hud = fps,frametimes
