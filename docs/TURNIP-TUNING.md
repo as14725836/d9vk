@@ -122,3 +122,44 @@ export DXVK_HUD=fps,frametimes      # 看帧时间，不要只看平均帧
 - 2.5–2.6 有内存预算函数但没有 `if (maxBudget)` 那段钳位逻辑
 - `d3d9_constant_buffer.cpp` 的 `Tristate::Auto` 分支只在 3.x 存在（2.7.1 里已确认找不到该锚点）
 - 2.x 及以上都有 `matchesDriver()`，所以驱动判定写法可以沿用
+
+---
+
+## 六、本轮变更：Turnip 优化改为**默认启用**
+
+根据要求，把原先需要 `DXVK_TURNIP_EXPERIMENTS=1` 才生效的两项实验，
+改成**在 tiler/移动驱动上默认生效**，同时保留一个显式关闭的出口：
+
+| 项 | 默认 | 关闭方式 |
+|---|---|---|
+| `preferComputeMipGen`（mip 生成走 compute） | Turnip 上**开** | `DXVK_TURNIP_EXPERIMENTS=0` |
+| `preferDescriptorByteOffsets`（描述符字节偏移） | Turnip 上**开** | `DXVK_TURNIP_EXPERIMENTS=0` |
+| d3d9 常量缓冲走 device-local | Turnip 上**开**（`Auto` 分支） | `d3d9.deviceLocalConstantBuffers = False` 或 `DXVK_TURNIP_EXPERIMENTS=0` |
+| 内存预算留 20% 余量 | 默认开（未显式设 `dxvk.maxMemoryBudget` 时） | 设 `dxvk.maxMemoryBudget = 4096`（任意 > 0 的值） |
+| 编译 worker 限到 4 | 默认开（未显式设 `dxvk.numCompilerThreads` 时） | 设 `dxvk.numCompilerThreads = 8` |
+
+### 修掉的两个编译错误（上一轮 CI 失败的真因）
+1. **include 路径写错**：`#include "util_env.h"` → `fatal error: util_env.h: No such file or directory`。
+   dxvk 里的正确写法是 `#include "../util/util_env.h"`（已确认仓库中其他文件都这么写）。
+2. **2.x 没有 `matchesDriver(VkDriverId)` 单参重载**：
+   `error: no matching function for call to 'dxvk::DxvkAdapter::matchesDriver(VkDriverId)'`。
+   因此 2.x 系列改用 `vendorID` 判断（Qualcomm `0x5143` / ARM `0x13B5` / Imagination `0x1010`），
+   并注意 2.7.x 的结构是 `deviceProperties().core.properties.vendorID`、
+   2.0 则是 `deviceProperties().vendorID`——两者不同，已分别适配。
+
+### 补丁文件（重命名后）
+
+| 文件 | 适用 | 内容 |
+|---|---|---|
+| `patches/0001-mobile-tuning.patch` | 3.0+ | 内存余量 + 编译线程（与上游默认值互斥，未显式配置时生效） |
+| `patches/0002-turnip-hints.patch` | 3.0+ | tiler 上默认开 compute mip gen + 描述符字节偏移 |
+| `patches/0003-turnip-constbuf.patch` | 3.0+ | tiler 上 d3d9 常量缓冲默认走 device-local |
+| `patches/v2.7/0001-mobile-tuning.patch` | 2.7 / 2.7.1 | 内存余量 + 线程（vendorID 判断） |
+| `patches/v2.0/0001-threads.patch` | 2.0 – 2.6.x | 仅线程（vendorID 判断） |
+
+> 注：`0002` 与 `0003` 内容相同（同一份 diff 同时覆盖 `dxvk_device.cpp` 与 `d3d9_constant_buffer.cpp`），
+> 分成两个文件名只是方便单独选用。
+>
+> **风险提醒（重要）**：默认启用意味着**未经验证的改动会作用到你所有游戏**。
+> 若出现贴图异常、花屏或帧率不升反降，第一件事就是设 `DXVK_TURNIP_EXPERIMENTS=0` 复测；
+> 仍异常则回退到官方 `dxvk-3.1.1`。这是“默认开”的代价，写在这里以免以后忘。

@@ -1,16 +1,16 @@
 diff --git a/src/dxvk/dxvk_memory.cpp b/src/dxvk/dxvk_memory.cpp
-index 150bb4c..0c9ba75 100644
+index 150bb4c..50b119b 100644
 --- a/src/dxvk/dxvk_memory.cpp
 +++ b/src/dxvk/dxvk_memory.cpp
 @@ -2252,6 +2252,12 @@ namespace dxvk {
      if (!m_device->features().extMemoryBudget)
        return;
  
-+    // [mobile-tuning patch] Tiler/mobile GPUs share memory with the system.
-+    const bool isMobileTiler =
-+        m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
-+     || m_device->adapter()->matchesDriver(VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
-+     || m_device->adapter()->matchesDriver(VK_DRIVER_ID_ARM_PROPRIETARY);
++    // [mobile-tuning patch] Mobile/tiler GPUs have no dedicated VRAM; keep
++    // headroom so the kernel OOM killer does not pick us. Default on; set
++    // dxvk.maxMemoryBudget to a value if you need the old behaviour.
++    const uint32_t vendorId = m_device->adapter()->deviceProperties().core.properties.vendorID;
++    const bool isMobileTiler = (vendorId == 0x5143u || vendorId == 0x13B5u || vendorId == 0x1010u);
 +
      VkDeviceSize maxBudget = m_device->config().maxMemoryBudget;
  
@@ -27,19 +27,21 @@ index 150bb4c..0c9ba75 100644
        }
      }
 diff --git a/src/dxvk/dxvk_pipemanager.cpp b/src/dxvk/dxvk_pipemanager.cpp
-index b0b03f9..fd874a8 100644
+index b0b03f9..3e0acd6 100644
 --- a/src/dxvk/dxvk_pipemanager.cpp
 +++ b/src/dxvk/dxvk_pipemanager.cpp
-@@ -91,8 +91,12 @@ namespace dxvk {
+@@ -91,8 +91,14 @@ namespace dxvk {
        if (env::is32BitHostPlatform())
          workerCount = std::min(workerCount, 16u);
  
 -      if (m_device->config().numCompilerThreads > 0)
 +      if (m_device->config().numCompilerThreads > 0) {
          workerCount = m_device->config().numCompilerThreads;
-+      } else if (m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
-+              || m_device->adapter()->matchesDriver(VK_DRIVER_ID_QUALCOMM_PROPRIETARY)) {
-+        workerCount = std::min(workerCount, 4u);
++      } else {
++        // [mobile-tuning patch] cap shader compiler workers on mobile/tiler GPUs
++        const uint32_t workerVendorId = m_device->adapter()->deviceProperties().core.properties.vendorID;
++        if (workerVendorId == 0x5143u || workerVendorId == 0x13B5u || workerVendorId == 0x1010u)
++          workerCount = std::min(workerCount, 4u);
 +      }
  
        // Number of workers that can process pipeline pipelines with normal

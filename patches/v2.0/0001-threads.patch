@@ -1,17 +1,19 @@
 diff --git a/src/dxvk/dxvk_pipemanager.cpp b/src/dxvk/dxvk_pipemanager.cpp
-index 76ad41e..1fe8154 100644
+index 76ad41e..6697be5 100644
 --- a/src/dxvk/dxvk_pipemanager.cpp
 +++ b/src/dxvk/dxvk_pipemanager.cpp
-@@ -110,8 +110,12 @@ namespace dxvk {
+@@ -110,8 +110,14 @@ namespace dxvk {
        if (env::is32BitHostPlatform())
          workerCount = std::min(workerCount, 16u);
  
 -      if (m_device->config().numCompilerThreads > 0)
 +      if (m_device->config().numCompilerThreads > 0) {
          workerCount = m_device->config().numCompilerThreads;
-+      } else if (m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
-+              || m_device->adapter()->matchesDriver(VK_DRIVER_ID_QUALCOMM_PROPRIETARY)) {
-+        workerCount = std::min(workerCount, 4u);
++      } else {
++        // [mobile-tuning patch] cap shader compiler workers on mobile/tiler GPUs
++        const uint32_t workerVendorId = m_device->adapter()->deviceProperties().vendorID;
++        if (workerVendorId == 0x5143u || workerVendorId == 0x13B5u || workerVendorId == 0x1010u)
++          workerCount = std::min(workerCount, 4u);
 +      }
  
        // Number of workers that can process pipeline pipelines with normal
