@@ -18,3 +18,11 @@ dxvk.maxFrameLatency = 1
 # d3d9.textureMemory = 100
 # dxgi.deferSurfaceCreation = True
 # dxgi.syncFrameLatency = True
+
+# ---- 分辨率/交换链尺寸异常（日志出现 Buffer size: 185x2 之类）----
+# 首选：用固定尺寸的 Wine 虚拟桌面启动： wine explorer /desktop=dxvk,1280x720 game.exe
+# d3d9.forceAspectRatio = "16:9"
+# d3d9.enumerateByDisplays = False
+# d3d9.forceRefreshRate = 60
+# dxgi.forceRefreshRate = 60
+# d3d9.modeCountCompatibility = True

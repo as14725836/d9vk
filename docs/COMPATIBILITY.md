@@ -90,3 +90,50 @@ DXVK_LOG_LEVEL=debug DXVK_LOG_PATH=./dxvk-logs DXVK_HUD=api,devinfo wine game.ex
 | `dxvk-2.0` / `dxvk-async-2.0` | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
 | `dxvk-2.3.1` – `dxvk-3.1.1` | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | **✗（上游已删）** |
 | `dxvk-sao-1.11.1` | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
+
+## 6. 交换链尺寸异常（日志里出现 `Buffer size: 185x2` 这类分辨率）
+
+日志样例：
+```
+info:  Presenter: Actual swap chain properties:
+info:    Format:       VK_FORMAT_B8G8R8A8_UNORM
+info:    Color space:  VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
+info:    Present mode: VK_PRESENT_MODE_MAILBOX_KHR (dynamic: yes)
+info:    Buffer size:  185x2      <-- 异常
+info:    Image count:  5
+```
+
+**先搞清一件事：DXVK 不会自己发明分辨率。** 交换链尺寸就是它拿到的**窗口客户区尺寸**。
+`185x2` 这种值说明创建那一刻窗口尺寸本身就是退化的（通常是窗口/虚拟显示还没协商好尺寸，
+或者显示服务器报了一个极小/默认尺寸），DXVK 只是照单执行。所以这种问题**不能靠改 DLL 解决**，
+要在“显示尺寸”和“枚举模式”两个环节上规避：
+
+### 6.1 先固定尺寸，再启动游戏
+- 在 Winlator / Box64 容器里**先设好显示分辨率**，不要用“跟随窗口/自动”；
+- 启动顺序上，确保显示已经就绪后再拉起游戏（避免启动瞬间窗口还是0x0/极小）。
+
+### 6.2 用固定尺寸的 Wine 虚拟桌面启动（最有效）
+```bash
+wine explorer /desktop=dxvk,1280x720 game.exe
+# 或 1024x768 / 1280x800，按你容器分辨率选
+```
+虚拟桌面会把窗口固定成该尺寸，游戏拿到的客户区就不会退化，
+交换链不会出现 `185x2`；同时也能避免游戏自己乱改分辨率。
+
+### 6.3 配置兼底（放 dxvk.conf）
+```ini
+d3d9.forceAspectRatio = "16:9"      # 或 "4:3"，避免游戏按错误比例重设
+d3d9.enumerateByDisplays = False    # 不用显示服务器枚举模式，避免拿到怪模式
+d3d9.forceRefreshRate = 60          # 或 dxgi.forceRefreshRate = 60
+d3d9.modeCountCompatibility = True  # 个别老游戏对模式计数敏感
+```
+
+### 6.4 不要让游戏使用“桌面分辨率”
+在游戏设置里**显式选一个固定分辨率**（写进游戏的配置文件最稳），
+不要选“Desktop / 当前分辨率”。
+
+### 6.5 如果同时伴随黑屏
+再按 §2 试 `dxgi.deferSurfaceCreation = True`、关 vsync（`d3d9.presentInterval = 0`）。
+
+> 小结：`185x2` 是“窗口尺寸错了”的表现，不是 DXVK 的 bug；
+> 固定虚拟桌面尺寸 + 禁用按显示枚举，基本能消除这类怪分辨率。
