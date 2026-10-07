@@ -1,0 +1,25 @@
+diff --git a/src/d3d9/d3d9_constant_buffer.cpp b/src/d3d9/d3d9_constant_buffer.cpp
+index 13bff17..ec1c959 100644
+--- a/src/d3d9/d3d9_constant_buffer.cpp
++++ b/src/d3d9/d3d9_constant_buffer.cpp
+@@ -1,4 +1,5 @@
+ #include "d3d9_constant_buffer.h"
++#include "util_env.h"
+ #include "d3d9_device.h"
+ 
+ namespace dxvk {
+@@ -261,6 +262,14 @@ namespace dxvk {
+     if (option != Tristate::Auto)
+       return option == Tristate::True;
+ 
++    // [turnip-experiments patch] On tilers with unified memory, keeping constant
++    // buffers device-local can avoid host-visible round-trips. Upstream only
++    // enables streaming on discrete GPUs; expose the tiler case behind a switch.
++    if (env::getEnvVar("DXVK_TURNIP_EXPERIMENTS") == "1"
++     && (dxvkDevice->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
++      || dxvkDevice->adapter()->matchesDriver(VK_DRIVER_ID_QUALCOMM_PROPRIETARY)))
++      return true;
++
+     return dxvkDevice->properties().core.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+   }
+ 

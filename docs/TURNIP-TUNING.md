@@ -84,3 +84,41 @@ export DXVK_HUD=fps,frametimes      # 看帧时间，不要只看平均帧
 - CI 编译（x64 + x32）作为类型/语法验证
 - patch 0001 已在 `dxvk-3.1.1-mob` 上编译通过；另已随 master 快照（`dxvk-master-5b94142-mob`）
   验证了**在 v3.1.1 之后 63 个提交的新代码上仍能干净应用**
+
+---
+
+## 五、全版本适配矩阵（实测：逐个 tag 拉源码比对钩子）
+
+方法：对每个 tag 拉 `dxvk_memory.cpp` / `dxvk_pipemanager.cpp` / `d3d9_constant_buffer.cpp`，
+检查能否套用补丁所需的代码锚点（不是看文档、看实际代码）。
+
+| tag | 内存余量钩子 | 预算上限钩子 | 线程钩子 | 可用的本仓库补丁 |
+|---|---|---|---|---|
+| 3.1.1 / 3.0.2 / 3.0 | Y | Y | Y | `0001`+`0002`+`0003`（全套） |
+| 2.7.1 / 2.7 | Y | Y | Y | `v2.7/0001`（内存余量 + 线程） |
+| 2.6.2 / 2.6 / 2.5.3 / 2.5 | Y | — | Y | `v2.0/0001`（仅线程）；内存余量需额外适配 |
+| 2.4.1 / 2.4 / 2.3.1 / 2.2 / 2.1 / 2.0 | — | — | Y | `v2.0/0001`（仅线程） |
+| 1.10.3 / 1.9.4 | — | — | — | **无可用钩子**（代码结构不同，见下） |
+
+### 为什么 1.x 没有 Turnip 补丁（诚实的空缺）
+1.10.3 / 1.9.4 里：没有 `updateMemoryHeapBudgets()`（内存预算机制不同）、
+没有 `numCompilerThreads`（着色器编译线程固定）。
+要在 1.x 上做同类优化，需要重新写一套基于 1.x 代码结构的补丁，
+而 1.x 只服务于“Vulkan 1.1 老驱动”这个窄场景——
+优先级低于把 2.x/3.x 做扎实。**不编造假补丁来凑数，这是刻意的决定。**
+
+### 补丁清单
+
+| 文件 | 适用 | 内容 | 默认行为 |
+|---|---|---|---|
+| `patches/0001-mobile-tuning.patch` | 3.0+ | 内存余量 + 编译线程 | 仅在未显式配置时生效 |
+| `patches/0002-turnip-experiments.patch` | 3.x | `DXVK_TURNIP_EXPERIMENTS=1`：compute mip gen、描述符字节偏移 | 与上游一致 |
+| `patches/0003-turnip-constbuf-streaming.patch` | 3.0 / 3.1.1 | 同上开关：tiler 下 d3d9 常量缓冲也走 device-local | 与上游一致 |
+| `patches/v2.7/0001-mobile-tuning.patch` | 2.7 / 2.7.1 | 内存余量 + 线程（适配 `workerCount` 变量名） | 仅在未显式配置时生效 |
+| `patches/v2.0/0001-threads.patch` | 2.0 – 2.6.x | 仅线程（这些版本没有预算上限钩子） | 仅在未显式配置时生效 |
+
+适配的关键差异（审计中发现的）：
+- 2.x 的 pipemanager 里变量叫 `workerCount`（3.x 叫 `coreCount`）
+- 2.5–2.6 有内存预算函数但没有 `if (maxBudget)` 那段钳位逻辑
+- `d3d9_constant_buffer.cpp` 的 `Tristate::Auto` 分支只在 3.x 存在（2.7.1 里已确认找不到该锚点）
+- 2.x 及以上都有 `matchesDriver()`，所以驱动判定写法可以沿用

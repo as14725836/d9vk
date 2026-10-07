@@ -1,0 +1,46 @@
+diff --git a/src/dxvk/dxvk_memory.cpp b/src/dxvk/dxvk_memory.cpp
+index 150bb4c..0c9ba75 100644
+--- a/src/dxvk/dxvk_memory.cpp
++++ b/src/dxvk/dxvk_memory.cpp
+@@ -2252,6 +2252,12 @@ namespace dxvk {
+     if (!m_device->features().extMemoryBudget)
+       return;
+ 
++    // [mobile-tuning patch] Tiler/mobile GPUs share memory with the system.
++    const bool isMobileTiler =
++        m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
++     || m_device->adapter()->matchesDriver(VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
++     || m_device->adapter()->matchesDriver(VK_DRIVER_ID_ARM_PROPRIETARY);
++
+     VkDeviceSize maxBudget = m_device->config().maxMemoryBudget;
+ 
+     VkPhysicalDeviceMemoryBudgetPropertiesEXT memBudget = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT };
+@@ -2279,6 +2285,10 @@ namespace dxvk {
+ 
+           if (maxBudget)
+             m_memHeaps[i].memoryBudget = std::min(m_memHeaps[i].memoryBudget, maxBudget);
++          if (!maxBudget && isMobileTiler) {
++            VkDeviceSize mobileReserved = m_memHeaps[i].properties.size / 5u;
++            m_memHeaps[i].memoryBudget -= std::min(mobileReserved, m_memHeaps[i].memoryBudget);
++          }
+         }
+       }
+     }
+diff --git a/src/dxvk/dxvk_pipemanager.cpp b/src/dxvk/dxvk_pipemanager.cpp
+index b0b03f9..fd874a8 100644
+--- a/src/dxvk/dxvk_pipemanager.cpp
++++ b/src/dxvk/dxvk_pipemanager.cpp
+@@ -91,8 +91,12 @@ namespace dxvk {
+       if (env::is32BitHostPlatform())
+         workerCount = std::min(workerCount, 16u);
+ 
+-      if (m_device->config().numCompilerThreads > 0)
++      if (m_device->config().numCompilerThreads > 0) {
+         workerCount = m_device->config().numCompilerThreads;
++      } else if (m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
++              || m_device->adapter()->matchesDriver(VK_DRIVER_ID_QUALCOMM_PROPRIETARY)) {
++        workerCount = std::min(workerCount, 4u);
++      }
+ 
+       // Number of workers that can process pipeline pipelines with normal
+       // priority. Any other workers can only build high-priority pipelines.

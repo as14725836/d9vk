@@ -1,0 +1,18 @@
+diff --git a/src/dxvk/dxvk_pipemanager.cpp b/src/dxvk/dxvk_pipemanager.cpp
+index 76ad41e..1fe8154 100644
+--- a/src/dxvk/dxvk_pipemanager.cpp
++++ b/src/dxvk/dxvk_pipemanager.cpp
+@@ -110,8 +110,12 @@ namespace dxvk {
+       if (env::is32BitHostPlatform())
+         workerCount = std::min(workerCount, 16u);
+ 
+-      if (m_device->config().numCompilerThreads > 0)
++      if (m_device->config().numCompilerThreads > 0) {
+         workerCount = m_device->config().numCompilerThreads;
++      } else if (m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
++              || m_device->adapter()->matchesDriver(VK_DRIVER_ID_QUALCOMM_PROPRIETARY)) {
++        workerCount = std::min(workerCount, 4u);
++      }
+ 
+       // Number of workers that can process pipeline pipelines with normal
+       // priority. Any other workers can only build high-priority pipelines.
