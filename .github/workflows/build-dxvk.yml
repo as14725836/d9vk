@@ -28,6 +28,10 @@ on:
         description: '填了则在构建成功后创建/更新该 tag 的 Release'
         required: false
         default: ''
+      release_notes:
+        description: 'Release 说明里追加的内容（可空，会自动加上源码/补丁/工具链/安装说明）'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -125,6 +129,32 @@ jobs:
         run: |
           TAG="${{ inputs.release_tag }}"
           R="-R ${GITHUB_REPOSITORY}"
-          gh release view "$TAG" $R >/dev/null 2>&1 || gh release create "$TAG" $R --title "$TAG" --generate-notes --target "$GITHUB_SHA"
+          {
+            echo "# $TAG"
+            echo
+            echo "由 build-dxvk 流水线自动构建（run #${GITHUB_RUN_NUMBER}，仓库提交 ${GITHUB_SHA:0:7}）。"
+            echo
+            echo "## 这个包是什么"
+            echo "- 源码：\`${{ inputs.source_repo }}\` @ \`${{ inputs.ref }}\`"
+            echo "- 额外补丁：${{ inputs.patches }}"
+            echo "- 新工具链适配（补齐新 GCC/mingw 缺失头文件、D3D11_FORMAT_SUPPORT2 重复定义）：${{ inputs.fix_mingw_headers }}"
+            echo "- 构建环境：ubuntu-24.04 + mingw-w64 13.2.0（posix 线程模型）+ meson + ninja + glslang"
+            echo
+            echo "## 包内容"
+            echo '```'
+            tar tzf dxvk-src/build/dxvk-*.tar.gz | grep -E '/$|\.dll$' | sed 's/^/  /'
+            echo '```'
+            echo
+            echo "## 安装"
+            echo "1. 解压后把 \`x64\`（或 32 位游戏用 \`x32\`）目录里的 dll 拷到游戏 exe 同目录；"
+            echo "2. 或把 dll 放进 wine 的 system32 目录，并配合 \`setup_dxvk.sh install\`；"
+            echo "3. 想要 HUD/日志可设 \`DXVK_HUD=fps,devinfo\`、\`DXVK_LOG_LEVEL=info\`。"
+            echo
+            echo "## 备注"
+            echo "${{ inputs.release_notes }}"
+          } > /tmp/notes.md
+          cat /tmp/notes.md
+          gh release view "$TAG" $R >/dev/null 2>&1 || gh release create "$TAG" $R --title "$TAG" --target "$GITHUB_SHA" --notes-file /tmp/notes.md
+          gh release edit "$TAG" $R --notes-file /tmp/notes.md
           gh release upload "$TAG" $R dxvk-src/build/dxvk-*.tar.gz --clobber
           echo "已发布: https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"
