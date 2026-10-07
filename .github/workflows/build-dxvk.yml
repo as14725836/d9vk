@@ -16,6 +16,10 @@ on:
         description: '要叠加的补丁 URL（空格分隔，.patch/.diff），留空则不改动源码'
         required: false
         default: ''
+      fix_mingw_headers:
+        description: '自动补齐旧代码缺失的头文件（适配新版 GCC/mingw，老版本必开）'
+        type: boolean
+        default: true
       version_name:
         description: '版本名（产物目录/压缩包 = dxvk-<版本名>），留空则由 ref 推导'
         required: false
@@ -70,6 +74,18 @@ jobs:
           done
           [ -z "${{ inputs.patches }}" ] && echo '未提供补丁，使用原始源码'
 
+      - name: 适配新工具链（可选）
+        if: inputs.fix_mingw_headers
+        run: |
+          cp scripts/fix-mingw-headers.py dxvk-src/ 2>/dev/null || true
+          cd dxvk-src
+          if [ -f fix-mingw-headers.py ]; then
+            python3 fix-mingw-headers.py
+          else
+            echo '本仓库未提供修复脚本，跳过'
+          fi
+          git diff --shortstat || true
+
       - name: 计算版本名
         id: v
         run: |
@@ -83,8 +99,16 @@ jobs:
         run: |
           cd dxvk-src
           chmod +x package-release.sh
-          ./package-release.sh "${{ steps.v.outputs.version }}" "$PWD/build"
-          ls -lh build/
+          # 只构建不打包：打包交给下面统一做，避开各 fork 的目录/压缩包命名差异
+          ./package-release.sh "${{ steps.v.outputs.version }}" "$PWD/build" --no-package
+          echo '=== 统一打包 ==='
+          cd build
+          for d in dxvk-*; do
+            [ -d "$d" ] || continue
+            tar -czf "$d.tar.gz" "$d"
+            echo "packed: $d.tar.gz"
+          done
+          ls -lh
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
