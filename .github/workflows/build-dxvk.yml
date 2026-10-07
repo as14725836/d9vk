@@ -72,7 +72,9 @@ jobs:
             patch -p1 --forward --batch < /tmp/p.patch
             echo "--- 应用成功: $u"
           done
-          [ -z "${{ inputs.patches }}" ] && echo '未提供补丁，使用原始源码'
+          if [ -z "${{ inputs.patches }}" ]; then
+            echo '未提供补丁，使用原始源码'
+          fi
 
       - name: 适配新工具链（可选）
         if: inputs.fix_mingw_headers
@@ -93,7 +95,6 @@ jobs:
           [ -n "$V" ] || V="${{ inputs.ref }}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "版本名 = $V"
-          ls -l ./dxvk-src | head -5
 
       - name: 构建 (dxvk x64 + x32)
         run: |

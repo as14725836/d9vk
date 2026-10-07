@@ -52,14 +52,14 @@ def insert_include(path, inc, sniff=None):
 
 # ---- 1) 已知的显式头文件补充 ----
 FIXES = [
-    ('src/util/util_bit.h',        'cstdint',  r'\buint(?:8|16|32|64)_t\b'),
-    ('src/util/util_vector.h',     'cstdint',  r'\buint(?:8|16|32|64)_t\b'),
-    ('src/util/util_matrix.h',     'cstdint',  r'\buint(?:8|16|32|64)_t\b'),
-    ('src/util/config/config.h',   'cstdint',  r'\buint(?:8|16|32|64)_t\b'),
+    ('src/util/util_bit.h',        'cstdint',  r'\b(?:u?int)(?:8|16|32|64)_t\b'),
+    ('src/util/util_vector.h',     'cstdint',  r'\b(?:u?int)(?:8|16|32|64)_t\b'),
+    ('src/util/util_matrix.h',     'cstdint',  r'\b(?:u?int)(?:8|16|32|64)_t\b'),
+    ('src/util/config/config.h',   'cstdint',  r'\b(?:u?int)(?:8|16|32|64)_t\b'),
     ('src/dxvk/dxvk_buffer.h',     'utility',  r'\bstd::exchange\b'),
     ('src/util/rc/util_rc_ptr.h',  'ostream',  r'\bstd::ostream\b'),
-    ('src/util/util_enum.h',       'cstdint',  r'\buint(?:8|16|32|64)_t\b'),
-    ('src/util/util_flags.h',      'cstdint',  r'\buint(?:8|16|32|64)_t\b'),
+    ('src/util/util_enum.h',       'cstdint',  r'\b(?:u?int)(?:8|16|32|64)_t\b'),
+    ('src/util/util_flags.h',      'cstdint',  r'\b(?:u?int)(?:8|16|32|64)_t\b'),
 ]
 
 
