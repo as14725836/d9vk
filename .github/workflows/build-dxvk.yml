@@ -164,9 +164,9 @@ jobs:
             echo ''  
             echo '  export WINEDLLOVERRIDES="'"$OVR"'=n,b"'
             if tar tzf dxvk-src/build/dxvk-*.tar.gz | grep -q 'setup_dxvk.sh'; then
-              echo "- 包内有 setup_dxvk.sh：在解压目录执行 \`./setup_dxvk.sh install\`"
+              echo "- 包内自带上游 setup_dxvk.sh：\`./setup_dxvk.sh install\`"
             else
-              echo "- 注意：本包不含 setup_dxvk.sh（新版上游已删除），请手动拷贝 DLL"
+              echo "- 上游 3.x 已删除 setup_dxvk.sh；本仓库另附通用安装脚本（同 Release 的附件 setup_dxvk.sh），用法：\`./setup_dxvk.sh <解压目录> [WINEPREFIX]\`"
             fi
             if ! echo "$DLLS" | grep -q 'd3d10.dll'; then
               echo "- 注意：本包不含 \`d3d10.dll\` / \`d3d10_1.dll\`（dxvk 2.0+ 上游已删）；需要 D3D10.1 的游戏请用 \`dxvk-1.10.3\`"
@@ -178,7 +178,12 @@ jobs:
             echo "${{ inputs.release_notes }}"
           } > /tmp/notes.md
           cat /tmp/notes.md
-          gh release view "$TAG" $R >/dev/null 2>&1 || gh release create "$TAG" $R --title "$TAG" --target "$GITHUB_SHA" --notes-file /tmp/notes.md
-          gh release edit "$TAG" $R --notes-file /tmp/notes.md
-          gh release upload "$TAG" $R dxvk-src/build/dxvk-*.tar.gz --clobber
+          sleep $((RANDOM % 20))   # 并发构建时错开，避开 releases API 瞬时限制
+          retry() { local n=0; until "$@"; do n=$((n+1)); if [ "$n" -ge 5 ]; then return 1; fi; sleep $((n * 10)); done; }
+          if gh release view "$TAG" $R >/dev/null 2>&1; then
+            retry gh release edit "$TAG" $R --notes-file /tmp/notes.md
+          else
+            retry gh release create "$TAG" $R --title "$TAG" --target "$GITHUB_SHA" --notes-file /tmp/notes.md
+          fi
+          retry gh release upload "$TAG" $R "$TAG" $R dxvk-src/build/dxvk-*.tar.gz --clobber scripts/setup_dxvk.sh --clobber
           echo "已发布: https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"

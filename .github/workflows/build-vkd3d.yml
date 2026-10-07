@@ -122,7 +122,12 @@ jobs:
             echo "${{ inputs.release_notes }}"
           } > /tmp/notes.md
           cat /tmp/notes.md
-          gh release view "$TAG" $R >/dev/null 2>&1 || gh release create "$TAG" $R --title "$TAG" --target "$GITHUB_SHA" --notes-file /tmp/notes.md
-          gh release edit "$TAG" $R --notes-file /tmp/notes.md
-          gh release upload "$TAG" $R "$TARBALL" --clobber
+          sleep $((RANDOM % 20))   # 并发构建时错开，避开 releases API 瞬时限制
+          retry() { local n=0; until "$@"; do n=$((n+1)); if [ "$n" -ge 5 ]; then return 1; fi; sleep $((n * 10)); done; }
+          if gh release view "$TAG" $R >/dev/null 2>&1; then
+            retry gh release edit "$TAG" $R --notes-file /tmp/notes.md
+          else
+            retry gh release create "$TAG" $R --title "$TAG" --target "$GITHUB_SHA" --notes-file /tmp/notes.md
+          fi
+          retry gh release upload "$TAG" $R "$TAG" $R "$TARBALL" --clobber scripts/setup_dxvk.sh --clobber
           echo "已发布: https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"
