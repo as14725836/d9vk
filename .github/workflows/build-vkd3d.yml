@@ -1,0 +1,128 @@
+name: build-vkd3d
+
+# D3D12 不是 dxvk 的活：D3D12 由 vkd3d-proton 提供（d3d12.dll / d3d12core.dll）
+# 本流水线构建 HansKristian-Work/vkd3d-proton 的 Windows 版（x64 + x86）
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '分支 / tag / 提交 SHA'
+        required: true
+        default: 'v3.0.1'
+      version_name:
+        description: '版本名（产物目录/压缩包 = vkd3d-proton-<版本名>），留空则由 ref 推导'
+        required: false
+        default: ''
+      release_tag:
+        description: '填了则在构建成功后创建/更新该 tag 的 Release'
+        required: false
+        default: ''
+      release_notes:
+        description: 'Release 说明里追加的内容（可空）'
+        required: false
+        default: ''
+      arm64x:
+        description: '额外构建 ARM64X 变体（Windows on ARM，本项目环境一般不需要）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: vkd3d-proton @ ${{ inputs.ref }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build mingw-w64 mingw-w64-tools glslang-tools zstd \
+            g++-mingw-w64-x86-64-posix g++-mingw-w64-i686-posix
+          for t in x86_64-w64-mingw32-gcc x86_64-w64-mingw32-g++ i686-w64-mingw32-gcc i686-w64-mingw32-g++; do
+            sudo update-alternatives --set "$t" "/usr/bin/$t-posix" || true
+          done
+          meson --version; ninja --version
+          x86_64-w64-mingw32-widl --version 2>/dev/null | head -2 || echo 'widl 版本未知'
+          x86_64-w64-mingw32-g++ -v 2>&1 | grep -i 'Thread model'
+
+      - name: 拉取源码（含子模块）
+        run: |
+          git clone --recurse-submodules -j 4 https://github.com/HansKristian-Work/vkd3d-proton vkd3d-src
+          cd vkd3d-src
+          git fetch --tags origin || true
+          git checkout "${{ inputs.ref }}" || git checkout "tags/${{ inputs.ref }}"
+          git submodule update --init --recursive -j 4
+          echo "HEAD: $(git rev-parse HEAD)"
+
+      - name: 计算版本名
+        id: v
+        run: |
+          V="${{ inputs.version_name }}"
+          [ -n "$V" ] || V="${{ inputs.ref }}"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "版本名 = $V"
+
+      - name: 构建 (d3d12 x64 + x86)
+        run: |
+          cd vkd3d-src
+          chmod +x package-release.sh
+          ARGS=""
+          if [ "${{ inputs.arm64x }}" = "true" ]; then ARGS="--build-arm64x"; fi
+          ./package-release.sh "${{ steps.v.outputs.version }}" "$PWD/build" --no-package $ARGS
+          echo '=== 统一打包 ==='
+          cd build
+          for d in vkd3d-proton-*; do
+            [ -d "$d" ] || continue
+            tar -czf "$d.tar.gz" "$d"
+            echo "packed: $d.tar.gz"
+          done
+          ls -lh
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: vkd3d-proton-${{ steps.v.outputs.version }}
+          path: vkd3d-src/build/vkd3d-proton-*.tar.gz
+          if-no-files-found: error
+
+      - name: 创建/更新 Release
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.release_tag }}"
+          R="-R ${GITHUB_REPOSITORY}"
+          TARBALL=$(ls vkd3d-src/build/vkd3d-proton-*.tar.gz | head -1)
+          {
+            echo "# $TAG"
+            echo
+            echo "D3D12 支持包（vkd3d-proton，**不是 dxvk**）。由 build-vkd3d 流水线自动构建（run #${GITHUB_RUN_NUMBER}）。"
+            echo
+            echo "## 基本信息"
+            echo "- 源码：\\`HansKristian-Work/vkd3d-proton\\` @ \\`${{ inputs.ref }}\\`"
+            echo "- 构建环境：ubuntu-24.04 + mingw-w64 13.2.0（posix）+ mingw-w64-tools(widl) + meson + glslang"
+            echo
+            echo "## 包内容"
+            echo '```'
+            tar tzf "$TARBALL" | grep -E '/$|\\.dll$' | sed 's/^/  /'
+            echo '```'
+            echo
+            echo "## 安装（与 dxvk 并存）"
+            echo '- 64 位 DLL → `drive_c/windows/system32`；32 位游戏用 `x86` 目录，放 `drive_c/windows/syswow64`'
+            echo '- 建议覆盖：`export WINEDLLOVERRIDES="d3d12,d3d12core=n,b"`（可与 dxvk 的 d3d9/d3d10core/d3d11/dxgi 合并成一行）'
+            echo '- 包内含 `setup_vkd3d_proton.sh`（如存在可执行 `./setup_vkd3d_proton.sh install`）'
+            echo
+            echo "## 说明"
+            echo '- vkd3d-proton 对驱动有硬要求（现代 Vulkan 特性；上游建议 Mesa 22.0+）。若 D3D12 游戏报错，优先查驱动。'
+            echo '- D3D8/9/10/11 仍由 dxvk 处理；D3D12 与 dxvk 可以同时安装，互不冲突。'
+            echo "${{ inputs.release_notes }}"
+          } > /tmp/notes.md
+          cat /tmp/notes.md
+          gh release view "$TAG" $R >/dev/null 2>&1 || gh release create "$TAG" $R --title "$TAG" --target "$GITHUB_SHA" --notes-file /tmp/notes.md
+          gh release edit "$TAG" $R --notes-file /tmp/notes.md
+          gh release upload "$TAG" $R "$TARBALL" --clobber
+          echo "已发布: https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"

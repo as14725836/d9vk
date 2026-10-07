@@ -145,10 +145,24 @@ jobs:
             tar tzf dxvk-src/build/dxvk-*.tar.gz | grep -E '/$|\.dll$' | sed 's/^/  /'
             echo '```'
             echo
-            echo "## 安装"
-            echo "1. 解压后把 \`x64\`（或 32 位游戏用 \`x32\`）目录里的 dll 拷到游戏 exe 同目录；"
-            echo "2. 或把 dll 放进 wine 的 system32 目录，并配合 \`setup_dxvk.sh install\`；"
-            echo "3. 想要 HUD/日志可设 \`DXVK_HUD=fps,devinfo\`、\`DXVK_LOG_LEVEL=info\`。"
+            echo "## 安装（关键：位数必须对应）"
+            DLLS=$(tar tzf dxvk-src/build/dxvk-*.tar.gz | grep -E '\.dll$' | sed 's|.*/||' | sort -u | tr '\n' ' ')
+            OVR=$(echo "$DLLS" | sed 's/\.dll//g; s/ /,/g; s/,$//')
+            echo "- 本包提供：$DLLS"
+            echo "- 64 位 DLL → \`drive_c/windows/system32\`；32 位游戏用 \`x32\`，放 \`drive_c/windows/syswow64\`"
+            echo "- 建议覆盖（native 优先，失败回退 builtin）："
+            echo ''  
+            echo '  export WINEDLLOVERRIDES="'"$OVR"'=n,b"'
+            if tar tzf dxvk-src/build/dxvk-*.tar.gz | grep -q 'setup_dxvk.sh'; then
+              echo "- 包内有 setup_dxvk.sh：在解压目录执行 \`./setup_dxvk.sh install\`"
+            else
+              echo "- 注意：本包不含 setup_dxvk.sh（新版上游已删除），请手动拷贝 DLL"
+            fi
+            if ! echo "$DLLS" | grep -q 'd3d10.dll'; then
+              echo "- 注意：本包不含 \`d3d10.dll\` / \`d3d10_1.dll\`（dxvk 2.0+ 上游已删）；需要 D3D10.1 的游戏请用 \`dxvk-1.10.3\`"
+            fi
+            echo "- 遇到黑屏 / 偏色 / \`D3D10CoreCreateDevice@20, aborting\`：见仓库 \`docs/COMPATIBILITY.md\`（override、位数、deferSurfaceCreation、格式开关逐项排查）"
+            echo "- 调试：\`DXVK_HUD=api,devinfo\`、\`DXVK_LOG_LEVEL=debug\`、\`DXVK_LOG_PATH=./dxvk-logs\`"
             echo
             echo "## 备注"
             echo "${{ inputs.release_notes }}"
