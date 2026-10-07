@@ -53,11 +53,16 @@ jobs:
               except Exception:
                   continue
               ver = tag[1:] if tag.startswith('v') else tag
+              if prefix == 'dxvk-sao':
+                  ver = ver.replace('DXVK-SAO-', '')
+                  parts = ver.split('-')
+                  if len(parts) > 1 and parts[-1].isdigit():
+                      ver = '-'.join(parts[:-1])
               our = prefix + '-' + ver
               if release_exists('/repos/%s/releases/tags/%s' % (REPO, our)):
-                  print('skip（已存在）: ' + our, flush=True)
+                  print('skip（已存在）: ' + our, file=sys.stderr, flush=True)
                   continue
-              print('需要构建: %s @ %s' % (our, tag), flush=True)
+              print('需要构建: %s @ %s' % (our, tag), file=sys.stderr, flush=True)
               out.append({'source_repo': src, 'ref': tag,
                           'version_name': ver, 'release_tag': our})
           if not out:
