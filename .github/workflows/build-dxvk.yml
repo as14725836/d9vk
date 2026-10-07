@@ -121,7 +121,13 @@ jobs:
           for d in dxvk-*; do
             [ -d "$d" ] || continue
             tar -czf "$d.tar.gz" "$d"
-            echo "packed: $d.tar.gz"
+            # 带补丁的构建统一标记为 experiment，避免与官方版混淆
+            if [ -n "${{ inputs.patches }}" ]; then
+              mv -f "$d.tar.gz" "$d-experiment.tar.gz"
+              echo "packed: $d-experiment.tar.gz  (experiment: 已应用补丁)"
+            else
+              echo "packed: $d.tar.gz"
+            fi
           done
           ls -lh
 
