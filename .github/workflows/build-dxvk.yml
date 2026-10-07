@@ -185,5 +185,5 @@ jobs:
           else
             retry gh release create "$TAG" $R --title "$TAG" --target "$GITHUB_SHA" --notes-file /tmp/notes.md
           fi
-          retry gh release upload "$TAG" $R "$TAG" $R dxvk-src/build/dxvk-*.tar.gz --clobber scripts/setup_dxvk.sh --clobber
+          retry gh release upload "$TAG" $R dxvk-src/build/dxvk-*.tar.gz scripts/setup_dxvk.sh --clobber
           echo "已发布: https://github.com/${GITHUB_REPOSITORY}/releases/tag/$TAG"
