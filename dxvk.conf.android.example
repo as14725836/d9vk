@@ -1,0 +1,20 @@
+# Android / box64 + Wine 环境常用 DXVK 配置参考
+# 用法：改名为 dxvk.conf 放到游戏 exe 同目录，或设 DXVK_CONFIG_FILE 指向它。
+# 注意：本文件只包含主线 dxvk 认识的选项；某些第三方分支的 dxvk.* 私有选项不在此列。
+
+# ---- 帧率与延迟 ----
+d3d9.maxFrameRate = 0
+d3d9.presentInterval = 1
+dxgi.maxFrameRate = 0
+dxvk.maxFrameLatency = 1
+
+# ---- 库/统计（未体验时用，体验包完成后建议注释）----
+# dxvk.numCompilerThreads = 2
+# dxvk.hud = fps,devinfo,memory
+# d3d9.cachedDynamicBuffers = True
+
+# ---- 兼容性（果有贴图/黑屏问题再逐个打开）----
+# d3d9.forceSamplerTypeSpecConstants = True
+# d3d9.textureMemory = 100
+# dxgi.deferSurfaceCreation = True
+# dxgi.syncFrameLatency = True
