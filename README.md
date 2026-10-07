@@ -34,6 +34,7 @@ export WINEDLLOVERRIDES="d3d8,d3d9,d3d10core,d3d11,dxgi,d3d12,d3d12core=n,b"
 - **驱动侧（Turnip/Mesa）能力与建议** → [`docs/MESA-TURNIP-AUDIT.md`](docs/MESA-TURNIP-AUDIT.md)
 - **可用补丁/衍生版清单（哪些能复现、哪些只有成品）** → [`docs/PATCHES.md`](docs/PATCHES.md)
 - **本仓库自己的源码级补丁（含对 tilerMode 的重要更正）** → [`docs/SOURCE-PATCHES.md`](docs/SOURCE-PATCHES.md) + [`patches/`](patches/)
+- **box64 Android W^X (mprotect) 补丁调查与还原** → [`docs/BOX64-MPROTECT.md`](docs/BOX64-MPROTECT.md) + [`patches/box64/`](patches/box64/)
 - **配置模板** → [`dxvk.conf.android.example`](dxvk.conf.android.example)
 - **Galgame / 2D 游戏专项** → [`docs/GALGAME.md`](docs/GALGAME.md) + [`dxvk.conf.galgame.example`](dxvk.conf.galgame.example)
 - **性能调优总表** → [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)
