@@ -1,0 +1,57 @@
+diff --git a/src/dxvk/dxvk_memory.cpp b/src/dxvk/dxvk_memory.cpp
+index fc18044..2c25144 100644
+--- a/src/dxvk/dxvk_memory.cpp
++++ b/src/dxvk/dxvk_memory.cpp
+@@ -2433,6 +2433,18 @@ namespace dxvk {
+     if (!m_device->features().extMemoryBudget)
+       return;
+ 
++    // [mobile-tuning patch] Tiler/mobile GPUs have no dedicated VRAM and share
++    // physical memory with the rest of the system, so the driver-reported heap
++    // budget is optimistic. Keep part of it unused to reduce the chance of being
++    // killed by the kernel OOM killer while the system is under pressure.
++    const bool isMobileTiler =
++        m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
++     || m_device->adapter()->matchesDriver(VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
++     || m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_HONEYKRISP)
++     || m_device->adapter()->matchesDriver(VK_DRIVER_ID_ARM_PROPRIETARY)
++     || m_device->adapter()->matchesDriver(VK_DRIVER_ID_IMAGINATION_PROPRIETARY);
++
++
+     VkDeviceSize maxBudget = m_device->config().maxMemoryBudget;
+ 
+     VkPhysicalDeviceMemoryBudgetPropertiesEXT memBudget = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT };
+@@ -2460,6 +2472,11 @@ namespace dxvk {
+ 
+           if (maxBudget)
+             m_memHeaps[i].memoryBudget = std::min(m_memHeaps[i].memoryBudget, maxBudget);
++          // [mobile-tuning patch] Extra headroom when no explicit budget was set
++          if (!maxBudget && isMobileTiler) {
++            VkDeviceSize mobileReserved = m_memHeaps[i].properties.size / 5u;
++            m_memHeaps[i].memoryBudget -= std::min(mobileReserved, m_memHeaps[i].memoryBudget);
++          }
+         }
+       }
+     }
+diff --git a/src/dxvk/dxvk_pipemanager.cpp b/src/dxvk/dxvk_pipemanager.cpp
+index c1507b4..ffa9a3b 100644
+--- a/src/dxvk/dxvk_pipemanager.cpp
++++ b/src/dxvk/dxvk_pipemanager.cpp
+@@ -87,8 +87,16 @@ namespace dxvk {
+       uint32_t coreCount = dxvk::thread::hardware_concurrency();
+       coreCount = std::clamp(coreCount, 1u, 64u);
+ 
+-      if (m_device->config().numCompilerThreads > 0)
++      if (m_device->config().numCompilerThreads > 0) {
+         coreCount = m_device->config().numCompilerThreads;
++      } else if (m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
++              || m_device->adapter()->matchesDriver(VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
++              || m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_HONEYKRISP)) {
++        // [mobile-tuning patch] Mobile SoCs are big.LITTLE with few big cores, and
++        // shader compilation is mostly memory-bandwidth bound; oversubscribing the
++        // small cores tends to increase total compile time and heat.
++        coreCount = std::min(coreCount, 4u);
++      }
+ 
+       // Reduce worker count on 32-bit to save adderss space
+       uint32_t workerCount = coreCount;
