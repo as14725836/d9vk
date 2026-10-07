@@ -1,28 +1,3 @@
-diff --git a/src/d3d9/d3d9_constant_buffer.cpp b/src/d3d9/d3d9_constant_buffer.cpp
-index 13bff17..765ced8 100644
---- a/src/d3d9/d3d9_constant_buffer.cpp
-+++ b/src/d3d9/d3d9_constant_buffer.cpp
-@@ -1,4 +1,5 @@
- #include "d3d9_constant_buffer.h"
-+#include "../util/util_env.h"
- #include "d3d9_device.h"
- 
- namespace dxvk {
-@@ -261,6 +262,14 @@ namespace dxvk {
-     if (option != Tristate::Auto)
-       return option == Tristate::True;
- 
-+    // [turnip-tuning patch] Device-local (tiled) constant buffers are used by
-+    // default on tiler drivers, which is the common case on Android.
-+    // Explicit d3d9.deviceLocalConstantBuffers still wins, and
-+    // DXVK_TURNIP_EXPERIMENTS=0 reverts to upstream behaviour.
-+    const uint32_t vendorId = dxvkDevice->properties().core.properties.vendorID;
-+    if (vendorId == 0x5143u || vendorId == 0x13B5u || vendorId == 0x1010u)
-+      return env::getEnvVar("DXVK_TURNIP_EXPERIMENTS") != "0";
-+
-     return dxvkDevice->properties().core.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
-   }
- 
 diff --git a/src/dxvk/dxvk_device.cpp b/src/dxvk/dxvk_device.cpp
 index 0221825..f9a1b34 100644
 --- a/src/dxvk/dxvk_device.cpp
