@@ -1,8 +1,19 @@
 diff --git a/src/dxvk/dxvk_memory.cpp b/src/dxvk/dxvk_memory.cpp
-index fc18044..2c25144 100644
+index fc18044..cadd8c9 100644
 --- a/src/dxvk/dxvk_memory.cpp
 +++ b/src/dxvk/dxvk_memory.cpp
-@@ -2433,6 +2433,18 @@ namespace dxvk {
+@@ -6,6 +6,10 @@
+ 
+ #include "dxvk_device.h"
+ #include "dxvk_memory.h"
++
++#include <cstdlib>
++
++#include "../util/util_env.h"
+ #include "dxvk_sparse.h"
+ 
+ namespace dxvk {
+@@ -2433,6 +2437,18 @@ namespace dxvk {
      if (!m_device->features().extMemoryBudget)
        return;
  
@@ -21,13 +32,25 @@ index fc18044..2c25144 100644
      VkDeviceSize maxBudget = m_device->config().maxMemoryBudget;
  
      VkPhysicalDeviceMemoryBudgetPropertiesEXT memBudget = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT };
-@@ -2460,6 +2472,11 @@ namespace dxvk {
+@@ -2460,6 +2476,23 @@ namespace dxvk {
  
            if (maxBudget)
              m_memHeaps[i].memoryBudget = std::min(m_memHeaps[i].memoryBudget, maxBudget);
-+          // [mobile-tuning patch] Extra headroom when no explicit budget was set
++          // [mobile-tuning] Extra headroom when no explicit budget was set.
++          // The fraction is configurable via DXVK_MOBILE_MEMORY_HEADROOM_PCT
++          // (0 disables the reservation entirely, 20 is the default).
 +          if (!maxBudget && isMobileTiler) {
-+            VkDeviceSize mobileReserved = m_memHeaps[i].properties.size / 5u;
++            const VkDeviceSize size = m_memHeaps[i].properties.size;
++            VkDeviceSize mobileReserved = size / 5u;
++
++            const std::string headroomEnv = env::getEnvVar("DXVK_MOBILE_MEMORY_HEADROOM_PCT");
++            if (!headroomEnv.empty()) {
++              char* end = nullptr;
++              const uint64_t pct = strtoull(headroomEnv.c_str(), &end, 10);
++              if (end && *end == '\0' && pct <= 50u)
++                mobileReserved = size * pct / 100u;
++            }
++
 +            m_memHeaps[i].memoryBudget -= std::min(mobileReserved, m_memHeaps[i].memoryBudget);
 +          }
          }

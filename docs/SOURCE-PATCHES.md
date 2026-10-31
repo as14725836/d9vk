@@ -83,3 +83,97 @@ DXVK_HUD=fps,frametimes ./scripts/wine-stable-launch.sh game.exe 1280x720 "$PREF
 - `d3d9.deviceLocalConstantBuffers` 的 `Auto` 分支目前“只在独显上开”，可考虑对 2D/galgame 负载放宽；
 - 基于系统可用内存（`/proc/meminfo`）动态推导预算上限，而不是固定百分比；
 - 这些都需要先有实测数据支撑，否则就是拍脑袋改默认值。
+
+---
+
+# 2026-10-31 修订：三个补丁的重新审查
+
+上一篇文档只覆盖了 `0001`，并且当时没有 `0002` / `0003`。本次对三个补丁做了
+完整的源码级复验（真实 mingw 交叉编译 + 逐文件 `-fsyntax-only`），结论与改动如下。
+
+## 复验环境
+
+```
+DXVK      v3.1.1  (b1a1c99)
+编译器     x86_64-w64-mingw32-g++ 13-posix
+Vulkan    KhronosGroup/Vulkan-Headers (master，系统包版本过旧不满足 DXVK 3.1.1)
+依赖      dxbc-spirv (dxbc / ir / sm3 / util)
+```
+
+结果：四个受影响文件全部 `PASS`（`dxvk_memory.cpp`、`dxvk_pipemanager.cpp`、
+`dxvk_device.cpp`、`d3d9_constant_buffer.cpp`）。
+
+## 修订一：`0002` 曾经重复实现 `tilerMode`
+
+原 `0002` 在自己的局部定义了 `mobileTilerHints`（只列 3 个驱动）：
+```cpp
+const bool mobileTilerHints =
+     m_adapter->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
+  || m_adapter->matchesDriver(VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
+  || m_adapter->matchesDriver(VK_DRIVER_ID_MESA_HONEYKRISP);
+```
+但同一函数上方 20 行，上游**已有** `tilerMode`（列出 11 个 tiler 驱动）。
+现改为直接复用 `tilerMode`，并额外要求 `isUnifiedMemoryArchitecture()`，
+以免误伤“报了 tiler 驱动的独显”。
+
+## 修订二：`0002` 不再默认打开 `preferComputeMipGen`
+
+上游在这行正上方写着：
+> Compute-based mip generation has some potential for performance
+> regressions or driver issues. Just enable it on Nvidia and RADV
+> (GFX10+) for now, where it is proven to work.
+
+原补丁无视这条，直接给全部移动 tiler 打开。现改为**默认关闭**，
+需要时用 `DXVK_TURNIP_COMPUTE_MIPGEN=1` 显式开启（便于 A/B 基准）。
+
+`preferDescriptorByteOffsets` 仍然默认开（这一项没有对应的上游风险警告）。
+
+## 修订三：`0003` 的判断标准与覆盖面
+
+原补丁用 `vendorID` 判断，且只列了 3 个 vendor：
+```cpp
+if (vendorId == 0x5143u || vendorId == 0x13B5u || vendorId == 0x1010u)
+```
+三个问题：
+1. 与 `0001` / `0002` 的 `matchesDriver()` 风格不一致；
+2. **漏了 Honeykrisp**，而 `0001` / `0002` 都包含它；
+3. 语义过宽 —— 任何高通/ARM/Imagination 设备都命中，包括很老的 Adreno 3xx/4xx，
+   这些 GPU 上 device-local 常量缓冲未必更快。
+
+现改为 `matchesDriver()` + `isUnifiedMemoryArchitecture()`，
+并在列表里补齐 Honeykrisp / PanVK。
+
+## 修订四：`0001` 增加了可调开关
+
+原 `0001` 的 20% 硬编码且无法关闭（另两个补丁都有 `DXVK_TURNIP_EXPERIMENTS=0` 退路）。
+现在可用环境变量调整：
+
+```bash
+# 预留 20%（默认值，不设即为此值）
+# 预留 0%，完全关闭该行为
+DXVK_MOBILE_MEMORY_HEADROOM_PCT=0
+# 预留 10%
+DXVK_MOBILE_MEMORY_HEADROOM_PCT=10
+```
+取值上限 50%，非法值（非数字 / 超范围 / 带尾随字符）会自动回退到默认 20%。
+
+## 环境变量汇总
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `DXVK_TURNIP_EXPERIMENTS` | 未设（=启用） | 设 `0` 关闭 `0002`/`0003` 的移动端默认行为 |
+| `DXVK_MOBILE_MEMORY_HEADROOM_PCT` | `20` | `0001` 的内存预留百分比，`0` 关闭 |
+| `DXVK_TURNIP_COMPUTE_MIPGEN` | 未设（=关闭） | 设 `1` 才启用 compute mipgen 实验项 |
+
+## 仍然缺失的一环：实机数据
+
+以上都是**代码层面的正确性**验证（能编译、逻辑自洽、不违背上游判断）。
+真正缺的是 **Adreno 实机基准**：
+
+- `preferDescriptorByteOffsets` 在 Turnip 上是否真的更快？
+- `0003` 的 device-local 常量缓冲在各代 Adreno 上的收益/代价？
+- `0001` 的 20% 预留是否过大（某些大纹理游戏可能反而更早 OOM）？
+
+这三个问题没有实机数据无法回答。建议先在 A6xx / A7xx 各一台设备上做
+“打好补丁 vs 不打补丁”的帧率对比，再决定是否把 `preferComputeMipGen` 之类
+的实验项改为默认开。

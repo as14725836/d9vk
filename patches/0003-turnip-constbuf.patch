@@ -1,24 +1,34 @@
 diff --git a/src/d3d9/d3d9_constant_buffer.cpp b/src/d3d9/d3d9_constant_buffer.cpp
-index 13bff17..765ced8 100644
+index 13bff17..e93d918 100644
 --- a/src/d3d9/d3d9_constant_buffer.cpp
 +++ b/src/d3d9/d3d9_constant_buffer.cpp
-@@ -1,4 +1,5 @@
+@@ -1,4 +1,6 @@
  #include "d3d9_constant_buffer.h"
++
 +#include "../util/util_env.h"
  #include "d3d9_device.h"
  
  namespace dxvk {
-@@ -261,6 +262,14 @@ namespace dxvk {
+@@ -261,6 +263,23 @@ namespace dxvk {
      if (option != Tristate::Auto)
        return option == Tristate::True;
  
-+    // [turnip-tuning patch] Device-local (tiled) constant buffers are used by
-+    // default on tiler drivers, which is the common case on Android.
-+    // Explicit d3d9.deviceLocalConstantBuffers still wins, and
-+    // DXVK_TURNIP_EXPERIMENTS=0 reverts to upstream behaviour.
-+    const uint32_t vendorId = dxvkDevice->properties().core.properties.vendorID;
-+    if (vendorId == 0x5143u || vendorId == 0x13B5u || vendorId == 0x1010u)
-+      return env::getEnvVar("DXVK_TURNIP_EXPERIMENTS") != "0";
++    // [mobile-tuning] Tiler drivers benefit from device-local (tiled) constant
++    // buffers even though they are not reported as DISCRETE_GPU.  Restrict the
++    // override to tiler drivers on a unified memory architecture so that
++    // discrete GPUs keep the upstream heuristic.
++    const auto adapter = dxvkDevice->adapter();
++    const bool isTiler =
++         adapter->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
++      || adapter->matchesDriver(VK_DRIVER_ID_QUALCOMM_PROPRIETARY)
++      || adapter->matchesDriver(VK_DRIVER_ID_MESA_HONEYKRISP)
++      || adapter->matchesDriver(VK_DRIVER_ID_MESA_PANVK)
++      || adapter->matchesDriver(VK_DRIVER_ID_ARM_PROPRIETARY)
++      || adapter->matchesDriver(VK_DRIVER_ID_IMAGINATION_PROPRIETARY);
++
++    if (isTiler && adapter->isUnifiedMemoryArchitecture() &&
++        env::getEnvVar("DXVK_TURNIP_EXPERIMENTS") != "0")
++      return true;
 +
      return dxvkDevice->properties().core.properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
    }
