@@ -1,0 +1,45 @@
+diff --git a/src/dxgi/dxgi_adapter.cpp b/src/dxgi/dxgi_adapter.cpp
+index 259c782..697e709 100644
+--- a/src/dxgi/dxgi_adapter.cpp
++++ b/src/dxgi/dxgi_adapter.cpp
+@@ -433,7 +433,12 @@ namespace dxvk {
+ 
+       bool hideGpu = (adapterInfo.vendorId == uint16_t(DxvkGpuVendor::Nvidia) && hideNvidiaGpu)
+                   || (adapterInfo.vendorId == uint16_t(DxvkGpuVendor::Amd) && options->hideAmdGpu)
+-                  || (adapterInfo.vendorId == uint16_t(DxvkGpuVendor::Intel) && options->hideIntelGpu);
++                  || (adapterInfo.vendorId == uint16_t(DxvkGpuVendor::Intel) && options->hideIntelGpu)
++                  /* [mobile-gpu] Optionally hide mobile vendors (Qualcomm/ARM) so
++                   * DXGI matches D3D9's default behaviour. */
++                  || ((adapterInfo.vendorId == uint16_t(DxvkGpuVendor::Qualcomm)
++                    || adapterInfo.vendorId == uint16_t(DxvkGpuVendor::Arm))
++                   && options->hideMobileGpu);
+ 
+       if (hideGpu) {
+         adapterInfo.vendorId = fallbackVendor;
+diff --git a/src/dxgi/dxgi_options.cpp b/src/dxgi/dxgi_options.cpp
+index d83342e..b4140f4 100644
+--- a/src/dxgi/dxgi_options.cpp
++++ b/src/dxgi/dxgi_options.cpp
+@@ -191,6 +191,10 @@ namespace dxvk {
+     // logic to Nvidia later, if necessary.
+     this->hideAmdGpu = config.getOption<Tristate>("dxgi.hideAmdGpu", Tristate::Auto) == Tristate::True;
+     this->hideIntelGpu = config.getOption<Tristate>("dxgi.hideIntelGpu", Tristate::Auto) == Tristate::True;
++    /* [mobile-gpu] DXGI does not hide mobile vendors by default (unlike D3D9),
++     * but expose a switch so users can align the two if a game misbehaves on a
++     * mixed D3D9 + D3D11 identity. */
++    this->hideMobileGpu = config.getOption<Tristate>("dxgi.hideMobileGpu", Tristate::Auto) == Tristate::True;
+ 
+     if (isXessVendorWaNeeded()) {
+       Logger::info(str::format("XeSS: hiding Intel GPU Vendor ID"));
+diff --git a/src/dxgi/dxgi_options.h b/src/dxgi/dxgi_options.h
+index c61c574..e2ece51 100644
+--- a/src/dxgi/dxgi_options.h
++++ b/src/dxgi/dxgi_options.h
+@@ -51,6 +51,7 @@ namespace dxvk {
+ 
+     /// Reports Intel GPUs as a different vendor (usually AMD)
+     bool hideIntelGpu;
++    bool hideMobileGpu;
+ 
+     /// Enable HDR
+     bool enableHDR;

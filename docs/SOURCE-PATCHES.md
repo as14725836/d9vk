@@ -368,3 +368,42 @@ d3d9.hideMobileGpu = True    # 默认，伪装成 AMD
 ## 已知边界
 
 只影响 D3D9；DXGI 本身不伪装移动端厂商。完全对齐需给 DXGI 也加开关，留待后续。
+
+---
+
+# 补丁六：DXGI 侧移动端 GPU 伪装开关（0006-mobile-gpu-dxgi.patch）
+
+针对 v3.1.1，改动 3 个文件（+11 / -1）。
+
+## 目的
+
+补丁五给 D3D9 加了 d3d9.hideMobileGpu，但 DXGI（D3D10/11/12）侧
+原本就不伪装移动端厂商，两侧默认行为不一致：
+
+- D3D9 默认伪装（hideMobileGpu=True）
+- DXGI 默认不伪装（无此选项）
+
+本补丁给 DXGI 也加上 dxgi.hideMobileGpu，默认 False（保持 DXGI 现状），
+让用户可以主动对齐两侧。
+
+## 改动
+
+1. dxgi_options.{h,cpp}：新增 dxgi.hideMobileGpu，默认 False
+2. dxgi_adapter.cpp：hideGpu 逻辑增加 Qualcomm/Arm 分支
+
+## 用法
+
+```ini
+dxgi.hideMobileGpu = True    # 让 DXGI 也伪装成 AMD，与 D3D9 对齐
+dxgi.hideMobileGpu = False   # 默认，保留真实 Adreno 身份
+```
+
+## 对齐后的完整方案
+
+现在 D3D9 和 DXGI 各自有独立的 hideMobileGpu 开关，用户可按需组合：
+
+- 完全一致伪装：d3d9.hideMobileGpu=True + dxgi.hideMobileGpu=True
+- 完全一致暴露：d3d9.hideMobileGpu=False + dxgi.hideMobileGpu=False
+
+注意：两个开关默认值不同（D3D9 默认 True，DXGI 默认 False），
+这是为了保持各自上游的默认行为不变。
