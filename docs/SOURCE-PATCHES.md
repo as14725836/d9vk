@@ -177,3 +177,162 @@ DXVK_MOBILE_MEMORY_HEADROOM_PCT=10
 这三个问题没有实机数据无法回答。建议先在 A6xx / A7xx 各一台设备上做
 “打好补丁 vs 不打补丁”的帧率对比，再决定是否把 `preferComputeMipGen` 之类
 的实验项改为默认开。
+---
+
+# 补丁四：Adreno 分代识别（`0004-adreno-generation.patch`）
+
+针对 `v3.1.1`，新增 7 个文件改动（+361 / −1）。
+
+## 动机：deviceID 无法可靠识别 Adreno 型号
+
+Mesa 27 的 turnip 在 `src/freedreno/vulkan/tu_device.cc:1327` 这样上报：
+
+```c
+props->deviceID = pdevice->dev_id.chip_id;
+```
+
+但两侧宽度不一致：
+
+| 侧 | 类型 | 宽度 |
+|---|---|---|
+| `fd_dev_id.chip_id`（freedreno） | `uint64_t` | 48 位有效 |
+| `VkPhysicalDeviceProperties::deviceID` | `uint32_t` | 32 位 |
+
+赋值时高 16 位被静默截断。对照 `freedreno_devices.py` 的实际 chip_id：
+
+| 完整 chip_id | 截断后 deviceID | 设备名 |
+|---|---|---|
+| `0x00be06030500` | `0x06030500` | Adreno 8c Gen 3 |
+| `0x007506030500` | `0x06030500` | Adreno 7c+ Gen 3 |
+| `0x006006030500` | `0x06030500` | Adreno 7c+ Gen 3 Lite |
+| `0xffff06030500` | `0x06030500` | Adreno 7c+ Gen 3 |
+
+**四个不同的 GPU 上报同一个 deviceID。** 其中既有 Gen8（8c）也有 Gen7（7c+），
+任何基于 deviceID 的分代逻辑都会把它们混为一谈。
+
+同一个截断还影响其他地方，`tu_device.cc:116`：
+
+```c
+uint32_t chip_id = device->dev_id.chip_id;   // 用于 pipelineCacheUUID
+```
+
+这意味着不同型号可能共享 pipeline cache UUID 前缀。
+
+## 方案：从 deviceName 解析
+
+`deviceName` 由 turnip 通过 `fd_dev_name()` 填入，格式规整：
+
+| 名称样例 | 来源 |
+|---|---|
+| `Adreno (TM) 830` | 标准 |
+| `Turnip Adreno (TM) 830 (raytracing disabled)` | 带前缀/后缀 |
+| `Adreno 623` | 无 (TM) |
+| `Adreno 7c+ Gen 3` | c 系列 |
+| `Adreno 8c Gen 3` | c 系列 |
+| `Adreno X1-85` | X 系列 |
+| `Adreno (TM) X2-90` | X 系列 |
+
+新增 `src/dxvk/dxvk_adreno.{h,cpp}`，把这些名称解析成：
+
+```cpp
+enum class AdrenoGen : uint8_t { Unknown, Gen6, Gen7, Gen8 };
+
+struct AdrenoInfo {
+  AdrenoGen gen;          // 代际
+  uint32_t  model;        // 型号数字（830 / 623 / 702；c/X 系列为 0 或系列号）
+  bool      isCFamily;    // 7c+ / 8c
+  bool      isPlusVariant;// 带 "+"
+};
+```
+
+## 对外接口
+
+`DxvkAdapter` 新增三个方法（`src/dxvk/dxvk_adapter.h`）：
+
+```cpp
+AdrenoInfo adrenoInfo() const;                        // 完整信息（惰性缓存）
+AdrenoGen  adrenoGen()  const;                        // 只要代际
+bool       isAdrenoAtLeast(AdrenoGen gen) const;      // 代际比较
+```
+
+实现用 `mutable` 成员做惰性缓存，避免每次调用都解析字符串。
+
+## 用法示例：改进 D3D9 MSAA 判定
+
+`src/d3d9/d3d9_adapter.cpp` 原本有一段逻辑：
+
+```c
+if (!(availableFlags & sampleFlags) && dst.Format != VK_FORMAT_UNDEFINED) {
+  // Adreno 7XX GPUs cannot report general support for 8x MSAA ...
+```
+
+问题是当 `dst.Format == VK_FORMAT_UNDEFINED` 时直接跳过逐格式查询，
+而在 Adreno 上这个早期返回会误判 8x MSAA 不支持。现在：
+
+```c
+const bool adrenoNeedsPerFormatMsaa =
+    m_adapter->isAdrenoAtLeast(AdrenoGen::Gen7);
+
+if (!(availableFlags & sampleFlags)
+ && (dst.Format != VK_FORMAT_UNDEFINED || adrenoNeedsPerFormatMsaa)) {
+```
+
+Adreno Gen7+ 即使 `dst.Format` 未定义也走逐格式查询，其它厂商行为不变。
+
+## 单元测试
+
+`tests/adreno_test.cpp`，覆盖 24 个用例：
+
+```bash
+g++ -std=c++17 -I src/dxvk -o /tmp/adreno_test tests/adreno_test.cpp src/dxvk/dxvk_adreno.cpp
+/tmp/adreno_test
+```
+
+覆盖范围：
+- 全部 A6xx / A7xx / A8xx 数字型号（623 / 704 / 722 / 735 / 753 / 810 / 829 / 830 / 840）
+- Turnip 前缀与后缀（`Turnip Adreno (...)`、`(raytracing disabled)`）
+- c 系列（`7c+ Gen 3` / `7c+ Gen 3 Lite` / `8c Gen 3`）
+- X 系列（`X1-85` / `X2-90`）
+- 非 Adreno（llvmpipe / NVIDIA / AMD / Intel）必须返回 `Unknown`
+- 空字符串与 `nullptr`
+- **关键**：deviceID 碰撞的四个设备必须能被区分
+
+实测结果：**24/24 PASS**。
+
+## 解决的另一个问题
+
+`dxvk_device.cpp` 现在会记录解析出的代际：
+
+```
+info:  Adreno generation: 8
+```
+
+排查用户问题时，日志里能直接看到 DXVK 认为这是哪一代 Adreno，
+比让用户去猜 deviceID 对应什么型号可靠得多。
+
+## 已知边界
+
+1. **c 系列 model 为 0**。`7c+ Gen 3` 这类名称里没有可提取的三位数字，
+   所以只能给出代际（Gen7）而给不出精确型号。要区分 `7c+` 和 `7c+ Lite`
+   需要看 `isPlusVariant`，但 Lite 与普通版无法从名称区分 —— 这需要
+   mesa 侧在 deviceName 里带上更精确的信息。
+
+2. **X 系列映射是经验性的**。`X1` → Gen7、`X2` → Gen8 依据的是
+   mesa 设备表里 X1-85/X1-45 位于 A7xx 区块、X2-85/X2-90 位于 A8xx 区块。
+   若高通后续调整命名，需要同步更新 `dxvk_adreno.cpp`。
+
+3. **依赖 turnip 的命名格式**。如果用户用 `drirc` 的
+   `force_vk_devicename` 覆盖了设备名，解析会失效（返回 `Unknown`），
+   此时所有 Adreno 特化逻辑自动退回上游行为 —— 这是有意的安全默认值。
+
+## 建议的后续 mesa 侧改动（未包含在本补丁）
+
+如果要彻底解决，mesa 侧应该：
+
+1. `tu_device.cc:116` 改用 `uint64_t` 计算 pipelineCacheUUID，
+   避免不同型号共享 UUID。
+2. 考虑在 `VkPhysicalDeviceProperties` 之外，通过
+   `VK_KHR_get_physical_device_properties2` 或自定义扩展暴露完整 48 位 chip_id。
+   （MR !44985 的讨论范畴）
+
+在 mesa 侧改之前，本补丁的 deviceName 解析是唯一可行的 DXVK 侧方案。

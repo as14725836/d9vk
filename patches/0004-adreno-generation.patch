@@ -1,0 +1,451 @@
+diff --git a/src/d3d9/d3d9_adapter.cpp b/src/d3d9/d3d9_adapter.cpp
+index 32a33c4..dd4adae 100644
+--- a/src/d3d9/d3d9_adapter.cpp
++++ b/src/d3d9/d3d9_adapter.cpp
+@@ -1,5 +1,7 @@
+ #include "d3d9_adapter.h"
+ 
++#include "../dxvk/dxvk_adreno.h"
++
+ #include "d3d9_interface.h"
+ #include "d3d9_monitor.h"
+ #include "d3d9_caps.h"
+@@ -293,7 +295,16 @@ namespace dxvk {
+     else
+       availableFlags = properties.core.properties.limits.framebufferColorSampleCounts;
+ 
+-    if (!(availableFlags & sampleFlags) && dst.Format != VK_FORMAT_UNDEFINED) {
++    /* [adreno-msaa] Adreno GPUs (Gen7 and later) do not report general
++     * support for 8x MSAA because they lack it for 128 bit formats, so the
++     * per-format query below is required.  Do the same on every Adreno,
++     * since the reported sample counts are a lower bound in all cases, and
++     * keep the strict check for other vendors. */
++    const bool adrenoNeedsPerFormatMsaa =
++        m_adapter->isAdrenoAtLeast(AdrenoGen::Gen7);
++
++    if (!(availableFlags & sampleFlags)
++     && (dst.Format != VK_FORMAT_UNDEFINED || adrenoNeedsPerFormatMsaa)) {
+       // Adreno 7XX GPUs cannot report general support for 8x MSAA because they do not support it for 128 bit formats.
+       // So take the format into consideration when checking whether the sample count is supported.
+ 
+diff --git a/src/dxvk/dxvk_adapter.h b/src/dxvk/dxvk_adapter.h
+index 79e1787..092340d 100644
+--- a/src/dxvk/dxvk_adapter.h
++++ b/src/dxvk/dxvk_adapter.h
+@@ -6,6 +6,8 @@
+ #include "dxvk_device_info.h"
+ #include "dxvk_extension_provider.h"
+ #include "dxvk_include.h"
++
++#include "dxvk_adreno.h"
+ #include "dxvk_format.h"
+ 
+ #include "../util/util_gdi.h"
+@@ -288,6 +290,41 @@ namespace dxvk {
+      */
+     bool isUnifiedMemoryArchitecture() const;
+ 
++    /**
++     * \brief Queries the Adreno GPU generation
++     *
++     * Parses the Vulkan device name rather than relying on deviceID,
++     * because Turnip truncates the 48 bit chip_id into the 32 bit
++     * deviceID field and several distinct GPUs end up with the same ID.
++     * See dxvk_adreno.h for details.
++     *
++     * \returns Parsed Adreno info, AdrenoGen::Unknown if not an Adreno GPU
++     */
++    AdrenoInfo adrenoInfo() const {
++      if (!m_adrenoInfoQueried) {
++        m_adrenoInfo = parseAdrenoName(
++          m_capabilities.getProperties().core.properties.deviceName);
++        m_adrenoInfoQueried = true;
++      }
++      return m_adrenoInfo;
++    }
++
++    /**
++     * \brief Queries the Adreno generation
++     * \returns Generation, AdrenoGen::Unknown if not an Adreno GPU
++     */
++    AdrenoGen adrenoGen() const {
++      return adrenoInfo().gen;
++    }
++
++    /**
++     * \brief Tests whether this is an Adreno GPU of at least \c gen
++     * \param [in] gen Minimum generation
++     */
++    bool isAdrenoAtLeast(AdrenoGen gen) const {
++      return static_cast<uint8_t>(adrenoInfo().gen) >= static_cast<uint8_t>(gen);
++    }
++
+     /**
+      * \brief Registers a relationship with another GPU
+      *
+@@ -317,6 +354,10 @@ namespace dxvk {
+ 
+   private:
+     
++
++    /* Lazily filled by adrenoInfo(), which is const. */
++    mutable AdrenoInfo            m_adrenoInfo = { };
++    mutable bool                  m_adrenoInfoQueried = false;
+     DxvkInstance*           m_instance  = nullptr;
+     VkPhysicalDevice        m_handle    = VK_NULL_HANDLE;
+     D3DKMT_HANDLE           m_kmtLocal = 0;
+diff --git a/src/dxvk/dxvk_adreno.cpp b/src/dxvk/dxvk_adreno.cpp
+new file mode 100644
+index 0000000..f715f68
+--- /dev/null
++++ b/src/dxvk/dxvk_adreno.cpp
+@@ -0,0 +1,144 @@
++#include "dxvk_adreno.h"
++
++#include <cctype>
++#include <cstdlib>
++#include <cstring>
++#include <string>
++
++namespace dxvk {
++
++  namespace {
++
++    /**
++     * \brief Lowercases a string, for case-insensitive matching
++     */
++    std::string toLower(const char* s) {
++      std::string result(s ? s : "");
++      for (auto& c : result)
++        c = char(std::tolower(static_cast<unsigned char>(c)));
++      return result;
++    }
++
++    /**
++     * \brief Extracts the first run of digits starting at or after \c pos
++     *
++     * \returns The parsed value, and advances \c pos past the digits.
++     */
++    uint32_t takeNumber(const std::string& s, size_t& pos) {
++      while (pos < s.size() && !std::isdigit(static_cast<unsigned char>(s[pos])))
++        pos++;
++
++      if (pos >= s.size())
++        return 0u;
++
++      uint32_t value = 0u;
++      while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos]))) {
++        value = value * 10u + uint32_t(s[pos] - '0');
++        pos++;
++      }
++      return value;
++    }
++
++  }
++
++
++  AdrenoInfo parseAdrenoName(const char* deviceName) {
++    AdrenoInfo info;
++
++    if (deviceName == nullptr)
++      return info;
++
++    const std::string name = toLower(deviceName);
++
++    /* Must be an Adreno GPU.  Turnip reports either "Adreno (...) NNN"
++     * directly, or a "Turnip Adreno (...)" prefix; both contain "adreno".
++     * freedreno also has "FD..." style names, but those never carry the
++     * vendor name, so they resolve to Unknown here. */
++    if (name.find("adreno") == std::string::npos)
++      return info;
++
++    /* Detect the "c" family, e.g. "7c+ gen 3" / "8c gen 3".  These names
++     * do not expose a plain model number, so the generation has to come
++     * from the leading digit instead. */
++    size_t pos = name.find("adreno");
++    pos += std::strlen("adreno");
++
++    /* Skip over "(tm)" and whitespace to reach the model token. */
++    while (pos < name.size() && (std::isspace(static_cast<unsigned char>(name[pos]))
++                              || name[pos] == '(' || name[pos] == ')'))
++      pos++;
++
++    if (pos < name.size() && name.compare(pos, 2, "tm") == 0) {
++      pos += 2;
++      while (pos < name.size() && (std::isspace(static_cast<unsigned char>(name[pos]))
++                                || name[pos] == '(' || name[pos] == ')'))
++        pos++;
++    }
++
++    if (pos >= name.size())
++      return info;
++
++    /* "c" families: "<digit>c" followed by optional "+", e.g. 7c+ / 8c.
++     * These names do not carry a plain model number, so the generation has
++     * to come from the trailing "gen N". */
++    if (std::isdigit(static_cast<unsigned char>(name[pos]))
++     && pos + 1 < name.size()
++     && name[pos + 1] == 'c') {
++      const uint32_t lead = uint32_t(name[pos] - '0');
++      info.isCFamily = true;
++
++      size_t p = pos + 2;
++      if (p < name.size() && name[p] == '+') {
++        info.isPlusVariant = true;
++        p++;
++      }
++
++      /* Search "gen N" only after the c/plus marker, otherwise the "gen"
++       * of a later word would be picked up. */
++      const size_t genPos = name.find("gen", p);
++      if (genPos != std::string::npos) {
++        size_t q = genPos + 3;
++        const uint32_t gen = takeNumber(name, q);
++        if (gen == 6u)      info.gen = AdrenoGen::Gen6;
++        else if (gen == 7u) info.gen = AdrenoGen::Gen7;
++        else if (gen == 8u) info.gen = AdrenoGen::Gen8;
++      }
++
++      /* Fall back to the leading digit when no usable "gen N" was found. */
++      if (info.gen == AdrenoGen::Unknown) {
++        if (lead == 6u)      info.gen = AdrenoGen::Gen6;
++        else if (lead == 7u) info.gen = AdrenoGen::Gen7;
++        else if (lead == 8u) info.gen = AdrenoGen::Gen8;
++      }
++      return info;
++    }
++
++    /* "X" series naming, e.g. "X1-85" / "X2-90".  The generation is encoded
++     * in the leading digit: X1 -> Gen7 (A7xx derived), X2 -> Gen8. */
++    if (name[pos] == 'x') {
++      size_t p = pos + 1;
++      const uint32_t series = takeNumber(name, p);
++      info.model = series;
++      if (series == 1u)      info.gen = AdrenoGen::Gen7;
++      else if (series == 2u) info.gen = AdrenoGen::Gen8;
++      return info;
++    }
++
++    /* Numeric model, e.g. "830" / "623" / "702". */
++    const uint32_t model = takeNumber(name, pos);
++    if (model == 0u)
++      return info;
++
++    info.model = model;
++
++    /* Three digit models map directly: A830 -> gen 8, A623 -> gen 6,
++     * A702 -> gen 7. */
++    const uint32_t lead = model / 100u;
++    if (lead == 6u)      info.gen = AdrenoGen::Gen6;
++    else if (lead == 7u) info.gen = AdrenoGen::Gen7;
++    else if (lead == 8u) info.gen = AdrenoGen::Gen8;
++
++    return info;
++  }
++
++}
+\ No newline at end of file
+diff --git a/src/dxvk/dxvk_adreno.h b/src/dxvk/dxvk_adreno.h
+new file mode 100644
+index 0000000..2493e47
+--- /dev/null
++++ b/src/dxvk/dxvk_adreno.h
+@@ -0,0 +1,58 @@
++#pragma once
++
++#include <cstdint>
++
++namespace dxvk {
++
++  /**
++   * \brief Qualcomm Adreno GPU generation
++   *
++   * Derived from the Vulkan device name reported by Turnip, because
++   * VkPhysicalDeviceProperties::deviceID is a 32 bit field while
++   * freedreno's chip_id is 48 bit wide.  The assignment in Turnip
++   * (props->deviceID = dev_id.chip_id) therefore truncates the upper
++   * 16 bits, which makes several distinct GPUs collide:
++   *
++   *   0x00be06030500  Adreno 8c Gen 3
++   *   0x007506030500  Adreno 7c+ Gen 3
++   *   0x006006030500  Adreno 7c+ Gen 3 Lite
++   *   0xffff06030500  Adreno 7c+ Gen 3
++   *
++   * All four report deviceID == 0x06030500.  Parsing the device name is
++   * the only reliable way to tell them apart from a Vulkan client.
++   */
++  enum class AdrenoGen : uint8_t {
++    Unknown = 0,
++    Gen6,   // A610 .. A690
++    Gen7,   // A702 .. A7xx, includes X1 series
++    Gen8,   // A810 .. A8xx, includes X2 series
++  };
++
++  /**
++   * \brief Parsed description of an Adreno GPU
++   */
++  struct AdrenoInfo {
++    AdrenoGen gen = AdrenoGen::Unknown;
++    /// Numeric model, e.g. 830 for "Adreno (TM) 830". Zero when the name
++    /// does not carry a usable number (e.g. "8c Gen 3").
++    uint32_t  model = 0u;
++    /// True for the "c" variants such as "7c+ Gen 3" / "8c Gen 3".
++    bool      isCFamily = false;
++    /// True for the "+" variants such as "7c+ Gen 3".
++    bool      isPlusVariant = false;
++  };
++
++  /**
++   * \brief Parses an Adreno device name
++   *
++   * Accepts the spellings produced by Turnip / freedreno:
++   *   "Adreno (TM) 830", "Turnip Adreno (TM) 830 (raytracing disabled)",
++   *   "Adreno 623", "Adreno 7c+ Gen 3", "Adreno 8c Gen 3",
++   *   "Adreno X1-85", "Adreno (TM) X2-90"
++   *
++   * \param [in] deviceName Device name from VkPhysicalDeviceProperties
++   * \returns Parsed info, with AdrenoGen::Unknown when not an Adreno GPU
++   */
++  AdrenoInfo parseAdrenoName(const char* deviceName);
++
++}
+diff --git a/src/dxvk/dxvk_device.cpp b/src/dxvk/dxvk_device.cpp
+index 0221825..ebcf278 100644
+--- a/src/dxvk/dxvk_device.cpp
++++ b/src/dxvk/dxvk_device.cpp
+@@ -1,4 +1,7 @@
+ #include "dxvk_device.h"
++
++#include "../util/log/log.h"
++#include "../util/util_string.h"
+ #include "dxvk_instance.h"
+ #include "dxvk_latency_builtin.h"
+ #include "dxvk_latency_reflex.h"
+@@ -735,6 +738,15 @@ namespace dxvk {
+                   || m_adapter->matchesDriver(VK_DRIVER_ID_MESA_KOSMICKRISP);
+ 
+     applyTristate(tilerMode, m_options.tilerMode);
++
++    /* [adreno-gen] Pick up the Adreno generation from the device name.
++     * deviceID cannot be used for this: Turnip assigns the 48 bit chip_id
++     * into a 32 bit field, so e.g. "Adreno 7c+ Gen 3" and "Adreno 8c Gen 3"
++     * both end up as 0x06030500.  See dxvk_adreno.h. */
++    const AdrenoInfo adreno = m_adapter->adrenoInfo();
++    if (adreno.gen != AdrenoGen::Unknown)
++      Logger::info(str::format("Adreno generation: ", uint32_t(adreno.gen)));
++
+     hints.preferRenderPassOps = tilerMode;
+     hints.preferCachedMemory = tilerMode;
+ 
+diff --git a/src/dxvk/meson.build b/src/dxvk/meson.build
+index 6b12f95..62b38f2 100644
+--- a/src/dxvk/meson.build
++++ b/src/dxvk/meson.build
+@@ -29,6 +29,7 @@ dxvk_shaders = files([
+ dxvk_src = [
+   'dxvk_access.cpp',
+   'dxvk_adapter.cpp',
++  'dxvk_adreno.cpp',
+   'dxvk_allocator.cpp',
+   'dxvk_barrier.cpp',
+   'dxvk_buffer.cpp',
+diff --git a/tests/adreno_test.cpp b/tests/adreno_test.cpp
+new file mode 100644
+index 0000000..7d9565b
+--- /dev/null
++++ b/tests/adreno_test.cpp
+@@ -0,0 +1,93 @@
++#include "dxvk_adreno.h"
++
++#include <cstdio>
++#include <cstring>
++
++using namespace dxvk;
++
++static int g_fail = 0;
++
++static const char* genName(AdrenoGen g) {
++  switch (g) {
++    case AdrenoGen::Gen6: return "Gen6";
++    case AdrenoGen::Gen7: return "Gen7";
++    case AdrenoGen::Gen8: return "Gen8";
++    default:              return "Unknown";
++  }
++}
++
++static void check(const char* name, AdrenoGen wantGen, uint32_t wantModel,
++                  bool wantC = false, bool wantPlus = false) {
++  AdrenoInfo info = parseAdrenoName(name);
++  bool ok = info.gen == wantGen
++         && info.model == wantModel
++         && info.isCFamily == wantC
++         && info.isPlusVariant == wantPlus;
++
++  printf("%s  %-46s gen=%-7s model=%-5u c=%d plus=%d\n",
++         ok ? "PASS" : "FAIL", name, genName(info.gen), info.model,
++         int(info.isCFamily), int(info.isPlusVariant));
++
++  if (!ok) {
++    printf("      expected gen=%-7s model=%-5u c=%d plus=%d\n",
++           genName(wantGen), wantModel, int(wantC), int(wantPlus));
++    g_fail++;
++  }
++}
++
++int main() {
++  printf("=== Adreno device name parsing ===\n\n");
++
++  /* Names as produced by Turnip for numeric models */
++  check("Adreno (TM) 623", AdrenoGen::Gen6, 623);
++  check("Adreno (TM) 704", AdrenoGen::Gen7, 704);
++  check("Adreno (TM) 722", AdrenoGen::Gen7, 722);
++  check("Adreno (TM) 735", AdrenoGen::Gen7, 735);
++  check("Adreno (TM) 753", AdrenoGen::Gen7, 753);
++  check("Adreno (TM) 810", AdrenoGen::Gen8, 810);
++  check("Adreno (TM) 829", AdrenoGen::Gen8, 829);
++  check("Adreno (TM) 830", AdrenoGen::Gen8, 830);
++  check("Adreno (TM) 830v1", AdrenoGen::Gen8, 830);
++  check("Adreno (TM) 840", AdrenoGen::Gen8, 840);
++
++  /* Turnip prefixes and suffixes */
++  check("Turnip Adreno (TM) 830", AdrenoGen::Gen8, 830);
++  check("Turnip Adreno (TM) 830 (raytracing disabled)", AdrenoGen::Gen8, 830);
++  check("Adreno 623", AdrenoGen::Gen6, 623);
++
++  /* "c" family names, which carry no plain model number */
++  check("Adreno 7c+ Gen 3", AdrenoGen::Gen7, 0, true, true);
++  check("Adreno 7c+ Gen 3 Lite", AdrenoGen::Gen7, 0, true, true);
++  check("Adreno 8c Gen 3", AdrenoGen::Gen8, 0, true, false);
++
++  /* X series (four digit naming) */
++  check("Adreno X1-85", AdrenoGen::Gen7, 1);
++  check("Adreno (TM) X2-90", AdrenoGen::Gen8, 2);
++
++  /* Non-Adreno and malformed names must not be mistaken for Adreno */
++  check("llvmpipe (LLVM 15.0.7, 256 bits)", AdrenoGen::Unknown, 0);
++  check("NVIDIA GeForce RTX 4090", AdrenoGen::Unknown, 0);
++  check("AMD Radeon RX 7900 XTX", AdrenoGen::Unknown, 0);
++  check("Intel(R) UHD Graphics 770", AdrenoGen::Unknown, 0);
++  check("", AdrenoGen::Unknown, 0);
++  check(nullptr, AdrenoGen::Unknown, 0);
++
++  /* Critical: the four GPUs that collide on deviceID == 0x06030500
++   * must still be distinguishable through the parsed info. */
++  printf("\n=== deviceID collision cases (all report 0x06030500) ===\n");
++  AdrenoInfo a = parseAdrenoName("Adreno 8c Gen 3");
++  AdrenoInfo b = parseAdrenoName("Adreno 7c+ Gen 3");
++  AdrenoInfo c = parseAdrenoName("Adreno 7c+ Gen 3 Lite");
++  printf("8c Gen 3       -> gen=%s c=%d\n", genName(a.gen), int(a.isCFamily));
++  printf("7c+ Gen 3      -> gen=%s c=%d plus=%d\n", genName(b.gen), int(b.isCFamily), int(b.isPlusVariant));
++  printf("7c+ Gen 3 Lite -> gen=%s c=%d plus=%d\n", genName(c.gen), int(c.isCFamily), int(c.isPlusVariant));
++  if (a.gen == b.gen) {
++    printf("FAIL  8c and 7c+ resolve to the same generation\n");
++    g_fail++;
++  } else {
++    printf("PASS  8c(Gen8) and 7c+(Gen7) are distinguishable\n");
++  }
++
++  printf("\n%s  (%d failures)\n", g_fail ? "SOME TESTS FAILED" : "ALL TESTS PASSED", g_fail);
++  return g_fail ? 1 : 0;
++}
+\ No newline at end of file

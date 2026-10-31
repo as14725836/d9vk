@@ -34,6 +34,7 @@ export WINEDLLOVERRIDES="d3d8,d3d9,d3d10core,d3d11,dxgi,d3d12,d3d12core=n,b"
 - **驱动侧（Turnip/Mesa）能力与建议** → [`docs/MESA-TURNIP-AUDIT.md`](docs/MESA-TURNIP-AUDIT.md)
 - **可用补丁/衍生版清单（哪些能复现、哪些只有成品）** → [`docs/PATCHES.md`](docs/PATCHES.md)
 - **本仓库自己的源码级补丁（含对 tilerMode 的重要更正）** → [`docs/SOURCE-PATCHES.md`](docs/SOURCE-PATCHES.md) + [`patches/`](patches/)
+- **Adreno 分代识别（deviceID 截断问题的绕行方案）** → [`docs/SOURCE-PATCHES.md`](docs/SOURCE-PATCHES.md) + [`patches/0004-adreno-generation.patch`](patches/0004-adreno-generation.patch)
 - **box64 Android W^X (mprotect) 补丁调查与还原** → [`docs/BOX64-MPROTECT.md`](docs/BOX64-MPROTECT.md) + [`patches/box64/`](patches/box64/)
 - **配置模板** → [`dxvk.conf.android.example`](dxvk.conf.android.example)
 - **Galgame / 2D 游戏专项** → [`docs/GALGAME.md`](docs/GALGAME.md) + [`dxvk.conf.galgame.example`](dxvk.conf.galgame.example)
@@ -64,3 +65,4 @@ export WINEDLLOVERRIDES="d3d8,d3d9,d3d10core,d3d11,dxgi,d3d12,d3d12core=n,b"
 [doitsujin/dxvk](https://github.com/doitsujin/dxvk)、[HansKristian-Work/vkd3d-proton](https://github.com/HansKristian-Work/vkd3d-proton)、
 [Sporif/dxvk-async](https://github.com/Sporif/dxvk-async)、[Digger1955/dxvk-sao](https://github.com/Digger1955/dxvk-sao)、
 misyltoad/d9vk，以及所有上游贡献者。各项目遵循其原始许可（dxvk: zlib）。
+
