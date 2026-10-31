@@ -407,3 +407,55 @@ dxgi.hideMobileGpu = False   # 默认，保留真实 Adreno 身份
 
 注意：两个开关默认值不同（D3D9 默认 True，DXGI 默认 False），
 这是为了保持各自上游的默认行为不变。
+
+---
+
+# 补丁七：GPLAsync 异步管线编译（0007-gplasync.patch）
+
+来源：https://gitlab.com/Ph42oN/dxvk-gplasync （dxvk-gplasync-3.1.1-1.patch）
+
+针对 v3.1.1，改动 8 个文件。
+
+## 作用
+
+DXVK 默认在首次使用某个 pipeline 时同步编译着色器，这会在游戏里
+造成明显的卡顿（stutter）。GPLAsync 补丁引入异步管线编译：
+
+- 渲染目标（render target）连续被绘制若干帧后，判定为「稳定」，
+  此时允许新 pipeline 在后台线程编译，主线程不等待。
+- 编译期间该 pipeline 不绑定，等下一帧编译完成后再使用，从而
+  消除同步编译造成的卡顿。
+
+## 与上游的差异（适配说明）
+
+上游 gplasync 补丁基于 DXVK 的 master 分支，其中
+`status.store()` 调用带 `std::memory_order_release` 参数。
+但 DXVK v3.1.1 里该调用是单参数的 `status.store(status)`。
+
+本仓库的 0007 已针对 v3.1.1 做了适配：把上下文行中的
+`status.store(status, std::memory_order_release)` 改为
+`status.store(status)`，其余内容与上游完全一致。
+
+## 新增配置项
+
+```ini
+# dxvk.conf
+dxvk.enableAsync = True    # 默认，启用异步管线编译
+dxvk.enableAsync = False   # 禁用（退回上游同步编译）
+
+# 也可以用环境变量运行时关闭
+DXVK_ASYNC=0
+```
+
+## 适用场景
+
+对 Adreno/Turnip 移动端尤其有价值：移动端 GPU 的 shader 编译
+相对较慢，同步编译造成的卡顿更明显。配合 0001 的编译线程数
+调整（big.LITTLE 适配）效果更好。
+
+## 注意
+
+异步编译有一个已知权衡：pipeline 首次出现的那一帧可能短暂
+使用占位/旧 pipeline（或跳过该 draw），视觉上可能有一帧的
+轻微闪烁。这是所有 async 方案的固有代价，换取的是消除
+长卡顿。
