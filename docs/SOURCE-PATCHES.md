@@ -459,3 +459,51 @@ DXVK_ASYNC=0
 使用占位/旧 pipeline（或跳过该 draw），视觉上可能有一帧的
 轻微闪烁。这是所有 async 方案的固有代价，换取的是消除
 长卡顿。
+
+---
+
+# 补丁八：Turnip 禁用 swapchain present fence（0008-turnip-swapchain-fence.patch）
+
+针对 v3.1.1，改动 1 个文件（+9 / -1）。
+
+## 症状
+
+在 Turnip（含 XmoBox 等第三方魔改版）上，部分 D3D9 游戏在 Device reset
+后卡黑屏。对照测试：
+
+- DXVK 1.6.1 正常
+- DXVK 2.4.1（及 gplasync 版）正常
+- DXVK 2.5.3 官方黑屏
+- DXVK 3.1.1（含 gplasync）黑屏
+
+## 根因
+
+DXVK 2.5.x 引入提交 a5dc340「Use swap chain fences to synchronize WSI
+semaphores」，依赖 EXT_swapchain_maintenance1 的 present fence。
+
+Turnip 报告支持 swapchainMaintenance1，但其 present fence 实现有缺陷：
+fence 永不 signal。DXVK 的 waitForSwapchainFence() 以 ~0ull 超时无限等待，
+导致 present 阻塞、黑屏。Device reset 后重建 swapchain 时尤其明显。
+
+## 修复
+
+在 turnip 驱动上强制 m_hasSwapchainMaintenance1 = false，回退到 2.4.1
+的无 fence 路径（该路径已知在 Turnip 上正常）。
+
+对齐上游已有的 Gamescope 先例：上游自己就用 ENABLE_GAMESCOPE_WSI 环境
+变量绕过 Gamescope WSI 的同类 fence 不 signal 问题。
+
+```cpp
+if (m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP))
+  m_hasSwapchainMaintenance1 = false;
+```
+
+## 影响
+
+仅 Turnip 驱动受影响，回退到 pre-2.5.x 的 present 同步方式（与 2.4.1
+一致，已被验证稳定）。桌面驱动（AMD/NVIDIA/Intel）行为不变。
+
+## 备注
+
+这个问题的根本是 Turnip 的 swapchainMaintenance1 实现缺陷。若未来
+上游 Turnip 修复了 present fence，本补丁可以移除。
