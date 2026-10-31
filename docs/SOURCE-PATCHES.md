@@ -336,3 +336,35 @@ info:  Adreno generation: 8
    （MR !44985 的讨论范畴）
 
 在 mesa 侧改之前，本补丁的 deviceName 解析是唯一可行的 DXVK 侧方案。
+---
+
+# 补丁五：移动端 GPU 身份与 D3D9 伪装（0005-mobile-gpu.patch）
+
+针对 v3.1.1，改动 4 个文件（+6 / -1）。
+
+## 问题：D3D9 与 DXGI 对 Adreno 的厂商处理不一致
+
+DxvkGpuVendor 枚举只有 Amd / Nvidia / Intel，Qualcomm(0x5143)、ARM(0x13b5)
+被归为非经典厂商，导致 D3D9 和 DXGI 行为不一致：
+
+- D3D9 (d3d9_adapter.cpp)：isNonclassicalVendorId 为真，默认伪装成 AMD RX 6700 XT
+- DXGI (dxgi_adapter.cpp)：无此逻辑，保留真实 vendor ID
+
+同一个游戏，D3D9 报告 AMD，D3D11/12 报告 Adreno，可能触发初始化异常。
+
+## 改动
+
+1. dxvk_adapter.h：DxvkGpuVendor 增加 Qualcomm / Arm
+2. d3d9_options.{h,cpp}：新增 d3d9.hideMobileGpu 配置项，默认 True
+3. d3d9_adapter.cpp：hideGpu 改为 isNonclassicalVendorId && options.hideMobileGpu
+
+## 用法
+
+```ini
+d3d9.hideMobileGpu = False   # 暴露真实 Adreno 身份
+d3d9.hideMobileGpu = True    # 默认，伪装成 AMD
+```
+
+## 已知边界
+
+只影响 D3D9；DXGI 本身不伪装移动端厂商。完全对齐需给 DXGI 也加开关，留待后续。

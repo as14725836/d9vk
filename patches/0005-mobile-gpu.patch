@@ -1,0 +1,51 @@
+diff --git a/src/d3d9/d3d9_adapter.cpp b/src/d3d9/d3d9_adapter.cpp
+index dd4adae..4271640 100644
+--- a/src/d3d9/d3d9_adapter.cpp
++++ b/src/d3d9/d3d9_adapter.cpp
+@@ -1099,7 +1099,7 @@ namespace dxvk {
+                   || (m_vendorId == uint32_t(DxvkGpuVendor::Amd) && options.hideAmdGpu)
+                   || (m_vendorId == uint32_t(DxvkGpuVendor::Intel) && options.hideIntelGpu)
+                   // Hide the GPU by default for other vendors (default to reporting AMD)
+-                  || isNonclassicalVendorId;
++                  || (isNonclassicalVendorId && options.hideMobileGpu);
+ 
+       if (hideGpu) {
+         m_vendorId = fallbackVendor;
+diff --git a/src/d3d9/d3d9_options.cpp b/src/d3d9/d3d9_options.cpp
+index e46864e..28522c2 100644
+--- a/src/d3d9/d3d9_options.cpp
++++ b/src/d3d9/d3d9_options.cpp
+@@ -41,6 +41,7 @@ namespace dxvk {
+     this->hideNvkGpu                    = config.getOption<Tristate>    ("d3d9.hideNvkGpu",                    Tristate::Auto) == Tristate::True;
+     this->hideAmdGpu                    = config.getOption<Tristate>    ("d3d9.hideAmdGpu",                    Tristate::Auto) == Tristate::True;
+     this->hideIntelGpu                  = config.getOption<Tristate>    ("d3d9.hideIntelGpu",                  Tristate::True) == Tristate::True;
++    this->hideMobileGpu                 = config.getOption<Tristate>    ("d3d9.hideMobileGpu",                 Tristate::True) == Tristate::True;
+     this->maxFrameLatency               = config.getOption<int32_t>     ("d3d9.maxFrameLatency",               0);
+     this->maxFrameRate                  = config.getOption<int32_t>     ("dxvk.maxFrameRate",
+                                           config.getOption<int32_t>     ("d3d9.maxFrameRate",                  0));
+diff --git a/src/d3d9/d3d9_options.h b/src/d3d9/d3d9_options.h
+index e69a39a..5fc3158 100644
+--- a/src/d3d9/d3d9_options.h
++++ b/src/d3d9/d3d9_options.h
+@@ -34,6 +34,7 @@ namespace dxvk {
+ 
+     /// Reports Intel GPUs as a different vendor (usually AMD)
+     bool hideIntelGpu;
++    bool hideMobileGpu;
+ 
+     /// Present interval. Overrides the value
+     /// in D3DPRESENT_PARAMS used in swapchain present.
+diff --git a/src/dxvk/dxvk_adapter.h b/src/dxvk/dxvk_adapter.h
+index 092340d..829097d 100644
+--- a/src/dxvk/dxvk_adapter.h
++++ b/src/dxvk/dxvk_adapter.h
+@@ -27,6 +27,9 @@ namespace dxvk {
+     Amd    = 0x1002,
+     Nvidia = 0x10de,
+     Intel  = 0x8086,
++    /* Mobile / tiler vendors. */
++    Qualcomm = 0x5143,
++    Arm      = 0x13b5,
+   };
+ 
+   /**
