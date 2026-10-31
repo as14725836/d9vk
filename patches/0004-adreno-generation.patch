@@ -309,34 +309,6 @@ index 0000000..2493e47
 +  AdrenoInfo parseAdrenoName(const char* deviceName);
 +
 +}
-diff --git a/src/dxvk/dxvk_device.cpp b/src/dxvk/dxvk_device.cpp
-index 0221825..ebcf278 100644
---- a/src/dxvk/dxvk_device.cpp
-+++ b/src/dxvk/dxvk_device.cpp
-@@ -1,4 +1,7 @@
- #include "dxvk_device.h"
-+
-+#include "../util/log/log.h"
-+#include "../util/util_string.h"
- #include "dxvk_instance.h"
- #include "dxvk_latency_builtin.h"
- #include "dxvk_latency_reflex.h"
-@@ -735,6 +738,15 @@ namespace dxvk {
-                   || m_adapter->matchesDriver(VK_DRIVER_ID_MESA_KOSMICKRISP);
- 
-     applyTristate(tilerMode, m_options.tilerMode);
-+
-+    /* [adreno-gen] Pick up the Adreno generation from the device name.
-+     * deviceID cannot be used for this: Turnip assigns the 48 bit chip_id
-+     * into a 32 bit field, so e.g. "Adreno 7c+ Gen 3" and "Adreno 8c Gen 3"
-+     * both end up as 0x06030500.  See dxvk_adreno.h. */
-+    const AdrenoInfo adreno = m_adapter->adrenoInfo();
-+    if (adreno.gen != AdrenoGen::Unknown)
-+      Logger::info(str::format("Adreno generation: ", uint32_t(adreno.gen)));
-+
-     hints.preferRenderPassOps = tilerMode;
-     hints.preferCachedMemory = tilerMode;
- 
 diff --git a/src/dxvk/meson.build b/src/dxvk/meson.build
 index 6b12f95..62b38f2 100644
 --- a/src/dxvk/meson.build
