@@ -1,8 +1,6 @@
-diff --git a/src/dxvk/dxvk_presenter.cpp b/src/dxvk/dxvk_presenter.cpp
-index f93ae8d..695e29e 100644
 --- a/src/dxvk/dxvk_presenter.cpp
 +++ b/src/dxvk/dxvk_presenter.cpp
-@@ -43,7 +43,15 @@ namespace dxvk {
+@@ -43,7 +43,21 @@
      // KHR and EXT variants of this extension are completely identical
      m_hasSwapchainMaintenance1 = m_device->features().khrSwapchainMaintenance1.swapchainMaintenance1
                                || m_device->features().extSwapchainMaintenance1.swapchainMaintenance1;
@@ -14,7 +12,13 @@ index f93ae8d..695e29e 100644
 +    // after a D3D9 Device reset).  Fall back to the pre-2.5.x path that does
 +    // not rely on present fences, matching the behaviour of DXVK 2.4.1 which
 +    // is known to work on these drivers.
-+    if (m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP))
++    //
++    // We match on both the driver ID (MESA_TURNIP) and the Qualcomm PCI
++    // vendor ID (0x5143).  Third-party builds (XmoBox and friends) often
++    // re-brand the driver ID but keep the real Qualcomm vendor ID, so the
++    // vendor check is what actually catches them.
++    if (m_device->adapter()->matchesDriver(VK_DRIVER_ID_MESA_TURNIP)
++     || m_device->adapter()->info().vendorId == uint32_t(DxvkGpuVendor::Qualcomm))
 +      m_hasSwapchainMaintenance1 = false;
      // Gamescope WSI is currently broken and doesn't properly signal
      // the present fence if presentation is queued but fails.
